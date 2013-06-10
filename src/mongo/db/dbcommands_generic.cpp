@@ -19,7 +19,10 @@
 #include "mongo/pch.h"
 
 #include <time.h>
-
+#include "boost/date_time/posix_time/posix_time.hpp"
+#include "mongo/client/parallel.h"
+#include "mongo/client/connpool.h"
+ 
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/dbclient_rs.h"
 #include "mongo/db/auth/action_set.h"
@@ -98,6 +101,7 @@ namespace mongo {
             }
             return true;
         }
+#include <parallel.h>
     } cmdCloud;
 #endif
 
@@ -129,19 +133,80 @@ namespace mongo {
     } cmdBuildInfo;
 
 
+
+
+
+
+
     class PingCommand : public Command {
     public:
-        PingCommand() : Command( "ping" ) {}
+        PingCommand() : Command( "ping", "deep" ) {}
         virtual bool slaveOk() const { return true; }
         virtual void help( stringstream &help ) const { help << "a way to check that the server is alive. responds immediately even if server is in a db lock."; }
         virtual LockType locktype() const { return NONE; }
         virtual void addRequiredPrivileges(const std::string& dbname,
                                            const BSONObj& cmdObj,
                                            std::vector<Privilege>* out) {} // No auth required
-        virtual bool run(const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
+
+	virtual bool run(const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
             // IMPORTANT: Don't put anything in here that might lock db - including authentication
-            return true;
-        }
+		
+		//do a simple ping unless a "deep" ping is requested
+		if(!(cmdObj["deep"].trueValue()))
+			return true;
+
+		using namespace bson;
+       		BSONObjBuilder bSys;
+		
+        	result.appendDate( "currentTime" , jsTime() );
+        	result.append( "origin hostname" , prettyHostName() );
+
+		vector<BSONElement> v = cmdObj.getField("hosts").Array();
+
+		BSONObjBuilder outCommand;
+		outCommand.append("ping", 1);		
+		outCommand.append("deep", 0);
+
+		list< shared_ptr<Future::CommandResult> > futures;
+		string db = "admin";
+		HostAndPort hp;
+		for(vector<BSONElement>::iterator it = v.begin(), end = v.end(); it!= end; ++it)
+		{
+			BSONObjBuilder pingInfo;
+			hp = (*it).String();
+			string connection_info;
+			DBClientConnection dbc;
+			BSONObj ping_info;
+		
+			dbc.connect(hp.toString(true), connection_info);	
+			
+			//start timing		
+			using namespace boost::posix_time;
+			ptime time_start(microsec_clock::local_time());	
+		
+			//time the ping	
+		//	dbc.runCommand(db, outCommand.obj(), ping_info);
+	
+			//end timing
+			ptime time_end(microsec_clock::local_time());
+		
+			time_duration duration(time_end - time_start);
+			pingInfo.append("microseconds", to_simple_string(duration));
+			
+			if(connection_info == "")
+				connection_info = "no errors";
+		//	if(ping_info == "");
+			pingInfo.append("connection report", connection_info);
+			pingInfo.append("ping message", ping_info);
+	
+			bSys.append((*it).String(), pingInfo.obj());	
+		}
+
+		result.append( "ping results", bSys.obj() );
+		
+		return true;
+
+	}
     } pingCmd;
 
     class FeaturesCmd : public Command {
