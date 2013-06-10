@@ -163,10 +163,8 @@ namespace mongo {
 
 		vector<BSONElement> v = cmdObj.getField("hosts").Array();
 
-		BSONObjBuilder outCommand;
-		outCommand.append("ping", 1);		
-		outCommand.append("deep", 0);
-
+		BSONObj outCommand = BSON("ping" << 1 << "deep" << 0);
+		
 		list< shared_ptr<Future::CommandResult> > futures;
 		string db = "admin";
 		HostAndPort hp;
@@ -183,10 +181,10 @@ namespace mongo {
 			//start timing		
 			using namespace boost::posix_time;
 			ptime time_start(microsec_clock::local_time());	
-		
+			cout << "reaches after connection " << endl;	
 			//time the ping	
-		//	dbc.runCommand(db, outCommand.obj(), ping_info);
-	
+			dbc.runCommand(db, outCommand, ping_info);
+			cout << "reaches after ping " << endl;	
 			//end timing
 			ptime time_end(microsec_clock::local_time());
 		
@@ -195,11 +193,11 @@ namespace mongo {
 			
 			if(connection_info == "")
 				connection_info = "no errors";
-		//	if(ping_info == "");
+			
 			pingInfo.append("connection report", connection_info);
 			pingInfo.append("ping message", ping_info);
 	
-			bSys.append((*it).String(), pingInfo.obj());	
+			bSys.append((*it).String(), pingInfo.obj());
 		}
 
 		result.append( "ping results", bSys.obj() );
