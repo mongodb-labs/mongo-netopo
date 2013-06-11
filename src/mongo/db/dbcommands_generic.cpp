@@ -162,41 +162,38 @@ namespace mongo {
         	result.append( "origin hostname" , prettyHostName() );
 
 		vector<BSONElement> v = cmdObj.getField("hosts").Array();
-
 		BSONObj outCommand = BSON("ping" << 1 << "deep" << 0);
-		
-		list< shared_ptr<Future::CommandResult> > futures;
 		string db = "admin";
-		HostAndPort hp;
+		
 		for(vector<BSONElement>::iterator it = v.begin(), end = v.end(); it!= end; ++it)
 		{
 			BSONObjBuilder pingInfo;
-			hp = (*it).String();
-			string connection_info;
+			HostAndPort hp = (*it).String();
 			DBClientConnection dbc;
+			string connection_info;
 			BSONObj ping_info;
 		
-			dbc.connect(hp.toString(true), connection_info);	
-			
-			//start timing		
-			using namespace boost::posix_time;
-			ptime time_start(microsec_clock::local_time());	
-			cout << "reaches after connection " << endl;	
-			//time the ping	
-			dbc.runCommand(db, outCommand, ping_info);
-			cout << "reaches after ping " << endl;	
-			//end timing
-			ptime time_end(microsec_clock::local_time());
+			if(dbc.connect(hp.toString(true), connection_info))	
+			{				
+				//start timing		
+				using namespace boost::posix_time;
+				ptime time_start(microsec_clock::local_time());	
+				
+				//time the ping	
+				dbc.runCommand(db, outCommand, ping_info);
+				
+				//end timing
+				ptime time_end(microsec_clock::local_time());
 		
-			time_duration duration(time_end - time_start);
-			pingInfo.append("microseconds", to_simple_string(duration));
-			
+				time_duration duration(time_end - time_start);
+				pingInfo.append("microseconds", to_simple_string(duration));
+				pingInfo.append("ping message", ping_info);
+			}
+
 			if(connection_info == "")
 				connection_info = "no errors";
-			
 			pingInfo.append("connection report", connection_info);
-			pingInfo.append("ping message", ping_info);
-	
+			
 			bSys.append((*it).String(), pingInfo.obj());
 		}
 
