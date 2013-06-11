@@ -22,6 +22,7 @@
 #include "boost/date_time/posix_time/posix_time.hpp"
 #include "mongo/client/parallel.h"
 #include "mongo/client/connpool.h"
+#include <sstream>
  
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/dbclient_rs.h"
@@ -140,7 +141,7 @@ namespace mongo {
 
     class PingCommand : public Command {
     public:
-        PingCommand() : Command( "ping", "deep" ) {}
+        PingCommand() : Command( "ping" ) {}
         virtual bool slaveOk() const { return true; }
         virtual void help( stringstream &help ) const { help << "a way to check that the server is alive. responds immediately even if server is in a db lock."; }
         virtual LockType locktype() const { return NONE; }
@@ -152,7 +153,7 @@ namespace mongo {
             // IMPORTANT: Don't put anything in here that might lock db - including authentication
 		
 		//do a simple ping unless a "deep" ping is requested
-		if(!(cmdObj["deep"].trueValue()))
+		if(!(cmdObj["hosts"].trueValue()))
 			return true;
 
 		using namespace bson;
@@ -184,15 +185,20 @@ namespace mongo {
 				
 				//end timing
 				ptime time_end(microsec_clock::local_time());
-		
+
+				cout << "ping info : " << ping_info.toString() << endl;	
+				cout << "ping info length: " << ping_info.toString().size() << endl;
+	
 				time_duration duration(time_end - time_start);
-				pingInfo.append("microseconds", to_simple_string(duration));
-				pingInfo.append("ping message", ping_info);
+				std::stringstream strstream;
+				strstream << duration.total_microseconds();
+				pingInfo.append("microseconds", strstream.str());
+				if(ping_info.toString().size() > 11)
+					pingInfo.append("ping message", ping_info);
 			}
 
-			if(connection_info == "")
-				connection_info = "no errors";
-			pingInfo.append("connection report", connection_info);
+			if(connection_info != "")
+				pingInfo.append("connection report", connection_info);
 			
 			bSys.append((*it).String(), pingInfo.obj());
 		}

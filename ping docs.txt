@@ -1,0 +1,38 @@
+./buildscripts/emr/FileLock.java: * <incarnation> <last ping time in millis>
+./debian/mongos.1:find the member of the set with the lowest ping time.
+./debian/mongos.1:The ping time used for a set member compared by the
+./jstests/multiVersion/upgrade_cluster_v3_to_v4_wait_for_mongos.js:jsTest.log( "Waiting for 2.0 ping document..." );
+./jstests/multiVersion/upgrade_cluster_v3_to_v4_wait_for_mongos.js:                                             { $set : { ping : new Date(0) } });
+./jstests/sharding/read_pref_cmd.js:        // We don't have a way to alter ping times so we can't predict where an
+./src/mongo/client/dbclient_rs.cpp:     * @param localThresholdMillis the exclusive upper bound of ping time to be
+./src/mongo/client/dbclient_rs.cpp:                           << nextNodeIndex << ", ping time: " << node.pingTimeMillis << endl;
+./src/mongo/client/dbclient_rs.cpp:                               << _nextSlave << ", ping time: "
+./src/mongo/client/dbclient_rs.cpp:                    // update ping time with smoothed moving averaged (1/4th the delta)
+./src/mongo/client/dbclient_rs.h:             * @param  threshold  max ping time (in ms) to be considered local
+./src/mongo/client/dbclient_rs.h:         * @param localThresholdMillis the exclusive upper bound of ping time to be
+./src/mongo/client/dbclient_rs.h:        int _localThresholdMillis; // local ping latency threshold (protected by _lock)
+./src/mongo/client/distlock.cpp:            LOG( DistributedLock::logLvl - 1 ) << "creating distributed lock ping thread for " << addr
+./src/mongo/client/distlock.cpp:                        // Sleep for normal ping time
+./src/mongo/client/distlock.cpp:                        // Sleep for normal ping time
+./src/mongo/client/distlock.cpp:            warning() << "removing distributed lock ping thread '" << pingId << "'" << endl;
+./src/mongo/client/distlock.cpp:                      << ", ping interval : " << _lockPing << ", process : " << asProcess << " )" << endl;
+./src/mongo/client/distlock.cpp:    // For use in testing, ping thread should run indefinitely in practice.
+./src/mongo/client/distlock.cpp:                      << ", ping interval : " << _lockPing << ", process : " << _processId << " )"
+./src/mongo/client/distlock.cpp:                    // (in theory we should never see a ping here if used correctly)
+./src/mongo/client/distlock.cpp:                    LOG( logLvl ) << "empty ping found for process in lock '" << lockName << "'" << endl;
+./src/mongo/client/distlock.cpp:                LOG( logLvl ) << "checking last ping for lock '" << lockName << "'" << " against process " << _lastPingCheck.id << " and ping " << _lastPingCheck.lastPing << endl;
+./src/mongo/client/distlock.cpp:                        // If the ping has changed since we last checked, mark the current date and time
+./src/mongo/client/distlock.cpp:                    // ping state if acquired.
+./src/mongo/client/distlock.cpp:        // Always reset our ping if we're trying to get a lock, since getting a lock implies the lock state is open
+./src/mongo/db/repl/heartbeat.cpp:        ping = newInfo.ping;
+./src/mongo/db/repl/heartbeat.cpp:                // weight new ping with old pings
+./src/mongo/db/repl/heartbeat.cpp:                // on the first ping, just use the ping value
+./src/mongo/db/repl/heartbeat.cpp:                // lower timeout to remaining ping time
+./src/mongo/db/repl/rs.h:         * Find the closest member (using ping time) with a higher latest optime.
+./src/mongo/db/repl/rs_initialsync.cpp:        // find the member with the lowest ping time that has more data than me
+./src/mongo/dbtests/config_upgrade_tests.cpp:         * Stores sample shard and ping information at the current version.
+./src/mongo/s/balance.cpp:                // ping has to be first so we keep things in the config server in sync
+./src/mongo/s/cluster_client_internal.cpp:                // NOTE: We don't care if the ping is invalid, legacy stuff will be
+./src/mongo/s/cluster_client_internal.cpp:                    warning() << "could not parse ping document: " << pingDoc << causedBy(errMsg)
+./src/mongo/s/cluster_client_internal.cpp:                // Hack to determine older mongos versions from ping format
+./src/mongo/shell/utils_sh.js:                print( "Waited for active ping to change for host " + activePing._id + 
