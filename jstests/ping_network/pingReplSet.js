@@ -1,13 +1,13 @@
 load("jstests/replsets/rslib.js");
 doTest = function( signal ) {
 
-	// Set up a replica set and have each node ping
+	// Set up a replica set with three nodes and have each node ping
 	// every other node (complete graph) and return 
-	// whether each ping  was received or not.
+	// whether each ping was received or not.
 
 	// Replica set testing API
 	// Create a new replica set test. Specify a set name and
-	// the number of nodes you want.
+	// the number of nodes.
 	var replTest = new ReplSetTest( {name: 'testSet', nodes: 3} );
 
 	// Call startSet() to start each mongod in the replica set
@@ -22,7 +22,7 @@ doTest = function( signal ) {
 	// been elected master.
 	var master = replTest.getMaster();
 
-	// Call getDB on database "admin" to be able to be able to
+	// Call getDB on database "admin" to be able to 
 	// run database commands on the master mongod instance
 	var accessDB = "admin";	
 	var db_master = master.getDB(accessDB);
@@ -36,18 +36,21 @@ doTest = function( signal ) {
 	// the set (including itself). Also print whether the node
 	// is a primary or a secondary
 	print("Ping Results:");
-	var curr_db;	
+	var curr_host;	
 	var length = hostList.length;
 	for(var i=0; i<length; i++)
 	{
-		curr_db = nodes[i].getDB(accessDB);
-		curr_stats = curr_db.runCommand({isMaster: 1});	
+		curr_host = nodes[i].getDB(accessDB);
+		curr_stats = curr_host.runCommand({isMaster: 1});	
 		if(curr_stats.me == curr_stats.primary)
 			print("Primary:");
 		else
 			print("Secondary:");	
-		printjson( curr_db.runCommand( { "ping" : 1, hosts : hostList} ) );
+		printjson( curr_host.runCommand( { "ping" : 1, hosts : hostList} ) );
 	}
+	print("\n\n\n\n\n\n\n\n\n");
+	printjson(hostList);
+	print("\n\n\n\n\n\n\n\n\n");
 	
 	replTest.stopSet( signal );
 }

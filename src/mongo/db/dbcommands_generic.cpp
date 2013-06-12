@@ -186,9 +186,6 @@ namespace mongo {
 				//end timing
 				ptime time_end(microsec_clock::local_time());
 
-				cout << "ping info : " << ping_info.toString() << endl;	
-				cout << "ping info length: " << ping_info.toString().size() << endl;
-	
 				time_duration duration(time_end - time_start);
 				std::stringstream strstream;
 				strstream << duration.total_microseconds();
