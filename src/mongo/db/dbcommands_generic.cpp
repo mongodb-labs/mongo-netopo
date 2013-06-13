@@ -195,12 +195,12 @@ namespace mongo {
 			}
 
 			if(connection_info != "")
-				pingInfo.append("connection report", connection_info);
+				pingInfo.append("connection message", connection_info);
 			
 			bSys.append((*it).String(), pingInfo.obj());
 		}
 
-		result.append( "ping results", bSys.obj() );
+		result.append( "results", bSys.obj() );
 		
 		return true;
 
