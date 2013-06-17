@@ -157,51 +157,55 @@ namespace mongo {
 			return true;
 
 		using namespace bson;
-       		BSONObjBuilder bSys;
 		
-        	result.appendDate( "currentTime" , jsTime() );
-        	result.append( "origin hostname" , prettyHostName() );
+        	//result.appendDate( "currentTime" , jsTime() );
 
 		vector<BSONElement> v = cmdObj.getField("hosts").Array();
 		BSONObj outCommand = BSON("ping" << 1 << "deep" << 0);
 		string db = "admin";
-		
+	
+		//for each host:port in the array
 		for(vector<BSONElement>::iterator it = v.begin(), end = v.end(); it!= end; ++it)
 		{
-			BSONObjBuilder pingInfo;
-			HostAndPort hp = (*it).String();
+			BSONObjBuilder curr;
+			HostAndPort hp = it->String();
 			DBClientConnection dbc;
-			string connection_info;
-			BSONObj ping_info;
+			
+			string connInfo;
+			BSONObj pingInfo;
 		
-			if(dbc.connect(hp.toString(true), connection_info))	
+			if(dbc.connect(hp.toString(true), connInfo))	
 			{				
-				//start timing		
+				curr.append("isConnected" , true );
+				if(connInfo != "")
+					curr.append("connInfo" , connInfo);	
+			
+				//time a ping	
 				using namespace boost::posix_time;
+				
 				ptime time_start(microsec_clock::local_time());	
-				
-				//time the ping	
-				dbc.runCommand(db, outCommand, ping_info);
-				
-				//end timing
+				dbc.runCommand(db, outCommand, pingInfo);
 				ptime time_end(microsec_clock::local_time());
-
+			
 				time_duration duration(time_end - time_start);
 				std::stringstream strstream;
 				strstream << duration.total_microseconds();
-				pingInfo.append("microseconds", strstream.str());
-				if(ping_info.toString().size() > 11)
-					pingInfo.append("ping message", ping_info);
-			}
+		
+				curr.append("pingTimeMicrosecs", strstream.str()); 
+				if(pingInfo.toString().size() > 11) //if more than { "ok" : 1 }
+					curr.append("pingInfo", pingInfo);
 
-			if(connection_info != "")
-				pingInfo.append("connection message", connection_info);
-			
-			bSys.append((*it).String(), pingInfo.obj());
+				//other connection diagnostics here eventually
+			}
+			else
+			{
+				curr.append("isConnected" , false );
+				curr.append("connInfo", connInfo);
+			}
+	
+			result.append(it->String(), curr.obj());
 		}
 
-		result.append( "results", bSys.obj() );
-		
 		return true;
 
 	}
