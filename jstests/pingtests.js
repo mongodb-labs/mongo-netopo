@@ -258,14 +258,27 @@ function makeDiagnosis( nodes , edges ){
 		var newShard = {}; 
 		newShard["shardName"] = node["replSetName"];
 		print("node[replSetName] : " + node["replSetName"]);
-//		newShard["status"] = diagnoseShard( srcID , nodes , edges);
+		newShard["status"] = diagnoseShard( node["replSetName"] , nodes , edges);
+		diagnosis["shards"].push(newShard);
 	    }
 	}
     });
 
     return diagnosis;
 }
+
+function indexOfJSONDoc( array , idType , myId ){
+    for(var i=0; i<array.length; i++){
+	if( array[i][idType] == myId)
+	    return i;
+    }
+    return -1;
+}
  
+function diagnoseShard( src , nodes , edges){ 
+
+}
+
 var ERR = {
     "MISSING_REQ_CONNECTION" : "Missing required connection at ",
     "MISSING_REC_CONNECTION" : "Missing recommended connection at ",
@@ -285,7 +298,7 @@ var recConnChart = {
     "secondary" : { "mongos":true , "config":true , "primary":true, "secondary":true }
 };
 
-function getRoleFromID( myID , nodes ){
+function getRoleFromId( myID , nodes ){
     for(var i=0; i<nodes.length; i++){
 	if( nodes[i][ id ] == myID){
 	    if( nodes[i]["process"] == "mongos")
@@ -309,10 +322,6 @@ function isReqConn( srcRole , tgtRole ){
 
 function isRecConn( srcRole , tgtRole ){
     return recConnChart[ srcRole ][ tgtRole ];
-}
-
-function diagnoseShard( srcID , nodes , edges){ 
-
 }
 
 function diagnose( srcId , nodes , edges  ){
