@@ -257,10 +257,19 @@ function makeDiagnosis( nodes , edges ){
 	    if( shardIndex < 0 ){ 
 		var newShard = {}; 
 		newShard["shardName"] = node["replSetName"];
-		print("node[replSetName] : " + node["replSetName"]);
-		newShard["status"] = diagnoseShard( node["replSetName"] , nodes , edges);
+		newShard["status"] = "";	
+		newShard["primary"] = new Array();
+		newShard["secondary"] = new Array();
+		//newShard["status"] = diagnoseShard( node["replSetName"] , nodes , edges);
 		diagnosis["shards"].push(newShard);
 	    }
+	    else{
+		var newNode = {};
+		newNode["hostName"] = node["hostname"];
+		newNode["status"] = diagnose( node[id] , nodes , edges );	
+		diagnosis["shards"][shardIndex][ node["role"] ].push(newNode);
+		 
+	    }	
 	}
     });
 
