@@ -96,9 +96,8 @@ function createShardedCluster() {
     // ShardingTest = function( testName, numShards, verboseLevel, numMongos, otherParams )
     // testName is the cluster name	
     //s = new ShardingTest( "shard1" , 3 , 0 , 3 );
-//    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , 
-//	shards:6 } );
-    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
+    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , shards:6 } );
+//    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
    return s;			
 
 }
@@ -257,13 +256,11 @@ function makeDiagnosis( nodes , edges ){
 	    if( shardIndex < 0 ){ 
 		var newShard = {}; 
 		newShard["shardName"] = node["replSetName"];
-		newShard["status"] = "";	
+		newShard["status"] = {};	
 		newShard["primary"] = new Array();
 		newShard["secondary"] = new Array();
-		newShard["status"] = diagnoseShard( node["replSetName"] , nodes , edges);
 		var newNode = {};
 		newNode["hostName"] = node["hostname"];
-		newNode["status"] = diagnose( node[id] , nodes , edges );	
 		newShard[ node["role"] ].push(newNode);	
 		diagnosis["shards"].push(newShard);
 	    }
@@ -276,7 +273,13 @@ function makeDiagnosis( nodes , edges ){
 	    }	
 	}
     });
-
+  
+    printjson(diagnosis); 
+    diagnosis["shards"].map( function(node){
+	diagnoseShards( diagnosis ); 
+  
+    }); 
+    
     return diagnosis;
 }
 
@@ -288,12 +291,12 @@ function indexOfJSONDoc( array , idType , myId ){
     return -1;
 }
  
-function diagnoseShard( shard , nodes , edges){ 
+function diagnoseShards( diagnosis ){ 
   
     var errors = new Array();
     var warnings = new Array();
 
-      
+ 
 
 
     var myStatus = {};
