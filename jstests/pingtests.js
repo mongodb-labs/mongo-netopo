@@ -260,7 +260,46 @@ function takeDiagnosis( nodes , edges ){
 		newShard["status"] = diagnoseShard( srcID , nodes , edges);
 	    }
 	}
-  
+
+    return diagnosis;
+}
+ 
+var ERR = {
+    "MISSING_REQ_CONNECTION" : "Missing required connection at ",
+    "MISSING_REC_CONNECTION" : "Missing recommended connection at ",
+}
+
+var reqConnChart = {
+    "mongos" : { "mongos":false , "config":true , "primary":true, "secondary":false },
+    "config" : { "mongos":true , "config":true , "primary":true, "secondary":false },
+    "primary" : { "mongos":true , "config":true , "primary":true, "secondary":false },
+    "secondary" : { "mongos":false , "config":false , "primary":false, "secondary":false }
+};
+ 
+var recConnChart = {
+    "mongos" : { "mongos":false , "config":false , "primary":false, "secondary":true },
+    "config" : { "mongos":false , "config":false , "primary":false, "secondary":true },
+    "primary" : { "mongos":false , "config":false , "primary":false, "secondary":true },
+    "secondary" : { "mongos":true , "config":true , "primary":true, "secondary":true }
+};
+
+function getRoleFromID( myID , nodes ){
+
+}
+
+function getHostFromID( myID , nodes ){
+    retur
+}
+
+function isReqConn( srcRole , tgtRole ){
+    return reqConnChart[ srcRole ][ tgtrole ];
+}
+
+function isRecConn( srcRole , tgtRole ){
+    return recConnChart[ srcRole ][ tgtRole ];
+}
+
+function diagnoseShard( srcID , nodes , edges){ 
     var errors = new Array();
     var warnings = new Array();
 
