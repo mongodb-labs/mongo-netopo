@@ -54,6 +54,8 @@ function pingReplSet( host ){
 	else
 	    var setName = masterStats["setName"];
 
+	output["members"] = masterStats["hosts"];
+
 	//check connections between each pair of nodes in the replset	
 	var serverSet = masterStats["hosts"];
 	for(var i=0; i<serverSet.length; i++){
@@ -96,7 +98,7 @@ function createShardedCluster() {
     // ShardingTest = function( testName, numShards, verboseLevel, numMongos, otherParams )
     // testName is the cluster name	
     //s = new ShardingTest( "shard1" , 3 , 0 , 3 );
-    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , shards:6 } );
+    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , shards:6 , config:3 } );
 //    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
    return s;			
 
@@ -106,16 +108,28 @@ function createShardedCluster() {
 // associated with this node
 function pingShardedCluster( host , verbosity ) {
 
+    try{
+	var conn = new Mongo( host );
+    }
+    catch(e){
+	printjson(e);
+	return;
+    } 
+    try{
+     	var configDB = conn.getDB(config); //what exactly is this "config"?
+    }
+    catch(e){
+	printjson(e);
+	return;
+    }
+
     var nodes = new Array();   
     var edges = new Array();
     var index = 0; 
 
-    var conn = new Mongo( host );
-    var configDB = conn.getDB(config); //what exactly is this "config"?
-    
     index = getShardServers( configDB , nodes , index );
     index = getMongosServers( configDB , nodes , index );
-    //getConfigServers( configDB , nodes , index );
+    index = getConfigServers( configDB , nodes , index );
    
     buildGraph( nodes , edges );   
 
@@ -130,7 +144,7 @@ function pingShardedCluster( host , verbosity ) {
     var userView = buildUserView( diagnosis , verbosity ); 
 
 //    printjson( graph ); 
-    printjson( diagnosis );
+//    printjson( diagnosis );
     printjson( userView );
 
 }
@@ -184,13 +198,13 @@ function buildUserView( diagnosis , verbosity ){
 function getMemberStatus( node ){
     var myStatus = {};
     if(node["status"]["warnings"].length > 0 && node["status"]["errors"].length > 0){
-	myStatus["errors"] = errors;
-	myStatus["warnings"] = warnings;	
+	myStatus["errors"] = node["status"]["errors"];
+	myStatus["warnings"] = node["status"]["warnings"];	
     }
     else if( node["status"]["warnings"].length > 0)
-    	myStatus["warnings"] = warnings;
+    	myStatus["warnings"] = node["status"]["warnings"];
     else if( node["status"]["errors"].length > 0)
-	myStatus["errors"] = errors;
+	myStatus["errors"] = node["status"]["errors"];
     else
 	myStatus = "ok";
     return myStatus;
@@ -306,9 +320,9 @@ function diagnoseShard( node ){
 
     if(node["primary"].length < 1)
 	errors.push( PROCESS_ERR["NO_PRIMARY"] );
-    else    
+/*    else    
 	checkReplSet( node["primary"][0] , warnings , errors )
-
+*/
     var myStatus = {};
     if( warnings.length == 0 && errors.length == 0)
 	myStatus["ok"] = 1; 
@@ -352,15 +366,15 @@ function getRoleFromId( myID , nodes ){
     }
 }
 
-function getHostFromID( myID , nodes ){
+function getHostFromId( myID , nodes ){
     for(var i=0; i<nodes.length; i++){
 	if( nodes[i][ id ] == myID )
-	    return nodes[i]["host"];
+	    return nodes[i]["hostname"];
     } 
 }
 
 function isReqConn( srcRole , tgtRole ){
-    return reqConnChart[ srcRole ][ tgtrole ];
+    return reqConnChart[ srcRole ][ tgtRole ];
 }
 
 function isRecConn( srcRole , tgtRole ){
@@ -378,11 +392,9 @@ function diagnose( srcId , nodes , edges  ){
 	    var tgtRole = getRoleFromId( edge[tgt] , nodes );	
 	    if( edge["isConnected"] == false){
 		if( isReqConn( srcRole , tgtRole ) )
-		    errors.push( ERR["MISSING_REQ_CONNECTION"] + 
-			getHostFromId( edge[tgt] , nodes ));
+		    errors.push( ERR["MISSING_REQ_CONNECTION"] + getHostFromId( edge[tgt] , nodes ));
 		if( isRecConn( srcRole , tgtRole ) )
-		    warnings.push( ERR["MISSING_REC_CONNECTION"] + 
-			getHostFromId( edge[tgt] , nodes));
+		    warnings.push( ERR["MISSING_REC_CONNECTION"] + getHostFromId(edge[tgt] , nodes));
 	    }	
 	}
     });
