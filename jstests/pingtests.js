@@ -261,6 +261,7 @@ function makeDiagnosis( nodes , edges ){
 		newShard["secondary"] = new Array();
 		var newNode = {};
 		newNode["hostName"] = node["hostname"];
+		newNode["status"] = diagnose( node[id] , nodes , edges );	
 		newShard[ node["role"] ].push(newNode);	
 		diagnosis["shards"].push(newShard);
 	    }
@@ -274,10 +275,8 @@ function makeDiagnosis( nodes , edges ){
 	}
     });
   
-    printjson(diagnosis); 
     diagnosis["shards"].map( function(node){
-	diagnoseShards( diagnosis ); 
-  
+	node["status"] = diagnoseShard( node ); 
     }); 
     
     return diagnosis;
@@ -291,13 +290,24 @@ function indexOfJSONDoc( array , idType , myId ){
     return -1;
 }
  
-function diagnoseShards( diagnosis ){ 
+function diagnoseShard( node ){ 
   
     var errors = new Array();
     var warnings = new Array();
 
- 
+    node["primary"].map( function(member){
+	if( member["status"]["ok"] != 1){
+	    if( member["status"]["warnings"].length > 0)
+		warnings.push( PROCESS_ERR["HAS_WARNING"] + member["hostName"] );
+	    if( member["status"]["errors"].length > 0)
+		errors.push( PROCESS_ERR["HAS_ERROR"] + member["hostName"] );
+	}
+    }); 
 
+    if(node["primary"].length < 1)
+	errors.push( PROCESS_ERR["NO_PRIMARY"] );
+    else    
+	checkReplSet( node["primary"][0] , warnings , errors )
 
     var myStatus = {};
     if( warnings.length == 0 && errors.length == 0)
