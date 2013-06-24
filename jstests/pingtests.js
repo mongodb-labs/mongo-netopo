@@ -128,11 +128,11 @@ function pingShardedCluster( host , verbosity ) {
     saveSnapshot(graph);
 
     var diagnosis = makeDiagnosis( nodes , edges );
-//    var userView = buildUserView( diagnosis , verbosity ); 
+    var userView = buildUserView( diagnosis , verbosity ); 
 
 //    printjson( graph ); 
     printjson( diagnosis );
-//    printjson( userView );
+    printjson( userView );
 
 }
 
@@ -260,7 +260,11 @@ function makeDiagnosis( nodes , edges ){
 		newShard["status"] = "";	
 		newShard["primary"] = new Array();
 		newShard["secondary"] = new Array();
-		//newShard["status"] = diagnoseShard( node["replSetName"] , nodes , edges);
+		newShard["status"] = diagnoseShard( node["replSetName"] , nodes , edges);
+		var newNode = {};
+		newNode["hostName"] = node["hostname"];
+		newNode["status"] = diagnose( node[id] , nodes , edges );	
+		newShard[ node["role"] ].push(newNode);	
 		diagnosis["shards"].push(newShard);
 	    }
 	    else{
@@ -284,7 +288,24 @@ function indexOfJSONDoc( array , idType , myId ){
     return -1;
 }
  
-function diagnoseShard( src , nodes , edges){ 
+function diagnoseShard( shard , nodes , edges){ 
+  
+    var errors = new Array();
+    var warnings = new Array();
+
+      
+
+
+    var myStatus = {};
+    if( warnings.length == 0 && errors.length == 0)
+	myStatus["ok"] = 1; 
+    else
+	myStatus["ok"] = 0;
+    myStatus["warnings"] = warnings;
+    myStatus["errors"] = errors;
+ 
+    return myStatus;	
+
 
 }
 
