@@ -96,9 +96,10 @@ function createShardedCluster() {
     // ShardingTest = function( testName, numShards, verboseLevel, numMongos, otherParams )
     // testName is the cluster name	
     //s = new ShardingTest( "shard1" , 3 , 0 , 3 );
-    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , 
-	shards:6 } );
-    return s;			
+//    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , 
+//	shards:6 } );
+    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
+   return s;			
 
 }
 
@@ -118,7 +119,7 @@ function pingShardedCluster( host , verbosity ) {
     //getConfigServers( configDB , nodes , index );
    
     buildGraph( nodes , edges );   
- 
+
     var graph = {};
     var curr_date = new Date();
     graph["currentTime"] = curr_date.toUTCString(); 
@@ -126,7 +127,7 @@ function pingShardedCluster( host , verbosity ) {
     graph["edges"] = edges;
     saveSnapshot(graph);
 
-    var diagnosis = takeDiagnosis( nodes , edges );
+    var diagnosis = makeDiagnosis( nodes , edges );
 //    var userView = buildUserView( diagnosis , verbosity ); 
 
 //    printjson( graph ); 
@@ -231,7 +232,7 @@ function getStatus( array , nameType ){
     return myStatus;
 }
 
-function takeDiagnosis( nodes , edges ){
+function makeDiagnosis( nodes , edges ){
     var diagnosis = {};
     diagnosis["mongos"] = new Array();
     diagnosis["shards"] = new Array();
@@ -257,9 +258,10 @@ function takeDiagnosis( nodes , edges ){
 		var newShard = {}; 
 		newShard["shardName"] = node["replSetName"];
 		print("node[replSetName] : " + node["replSetName"]);
-		newShard["status"] = diagnoseShard( srcID , nodes , edges);
+//		newShard["status"] = diagnoseShard( srcID , nodes , edges);
 	    }
 	}
+    });
 
     return diagnosis;
 }
@@ -284,11 +286,21 @@ var recConnChart = {
 };
 
 function getRoleFromID( myID , nodes ){
-
+    for(var i=0; i<nodes.length; i++){
+	if( nodes[i][ id ] == myID){
+	    if( nodes[i]["process"] == "mongos")
+		return "mongos";
+	    else
+		return nodes[i]["role"];
+	} 
+    }
 }
 
 function getHostFromID( myID , nodes ){
-    retur
+    for(var i=0; i<nodes.length; i++){
+	if( nodes[i][ id ] == myID )
+	    return nodes[i]["host"];
+    } 
 }
 
 function isReqConn( srcRole , tgtRole ){
@@ -300,33 +312,6 @@ function isRecConn( srcRole , tgtRole ){
 }
 
 function diagnoseShard( srcID , nodes , edges){ 
-    var errors = new Array();
-    var warnings = new Array();
-
-    var srcRole = getRoleFromId( srcId , nodes );
-    edges.map( function(edge){
-        if(edge[src] == srcId){
-	    var tgtRole = getRoleFromId( edge[tgt] , nodes );	
-	    if( edge["isConnected"] == false){
-		if( isReqConn( srcRole , tgtRole ) )
-		    errors.push( ERR["MISSING_REQ_CONNECTION"] + 
-			getHostFromId( edge[tgt] , nodes ));
-		if( isRecConn( srcRole , tgtRole ) )
-		    warnings.push( ERR["MISSING_REC_CONNECTION"] + 
-			getHostFromId( edge[tgt] , nodes));
-	    }	
-	}
-    });
-
-    var	memberStatus = {};
-    if( warnings.length == 0 && errors.length == 0)
-	memberStatus["ok"] = 1; 
-    else
-	memberStatus["ok"] = 0;
-    memberStatus["warnings"] = warnings;
-    memberStatus["errors"] = errors;
- 
-    return memberStatus;	
 
 }
 
