@@ -12,72 +12,69 @@ body{
 	padding: 20px;
 	}
 
-.node {
-  stroke: #eee;
+.node{
   stroke-width: 5px;
-  fill: red;
 }
 
 .mongos {
   stroke: yellow;
-  stroke-width: 5px;
   stroke-dasharray: 5,3;
   fill: darkorange;
 }
 
-.mongos_selected{
-  stroke: yellow;
-  stroke-width: 5px;
-  stroke-dasharray: 5,3;
-  fill: yellow;
-}
-
 .primary {
   stroke: limegreen;
-  stroke-width: 5px;
   fill: green;
-}
-
-.primary_selected{
-  stroke: limegreen;
-  stroke-width: 5px;
-  fill: yellow;
 }
 
 .secondary {
   stroke: darkgreen;
-  stroke-width: 5px;
   fill: green;
 }
 
-.secondary_selected{
-  stroke: darkgreen;
-  stroke-width: 5px;
+.selected{
   fill: yellow;
 }
 
 .link {
-  stroke: #999;
-  stroke-opacity: .1;
+  stroke: green;
+  stroke-opacity: .05;
   stroke-width: 3px;
 }
 
-.link_selected{
-  stroke: yellow;
-  stroke-opacity: .4;
-  stroke-width: 3px;
+.slow {
+  stroke: red;
+}
+
+.not_connected{
+  stroke: white;
+  stroke-dasharray: 2,2;
 }
 
 </style>
 </head>
 <body>
 <script src="http://d3js.org/d3.v3.min.js"></script>
-A Visualization of a Sharded Cluster Network
-<br/><br/>
+
+
+
+Visualization of a Sharded Cluster Network
+<br/>
+
+<form action="submitping.php" method="post">
+<input type="submit" name="submit" value="Ping Cluster">
+</form>
+
+
+
+
+
 <script>
 
 var width = 1000,
     height = 600;
+var statusHeight = 300;
+	statusWidth = 200;
 var bordercolor = "gray";
 var border = 1;
 var radius = 25;
@@ -90,9 +87,10 @@ var force = d3.layout.force()
     .size([width, height]);
 
 var svg = d3.select("body").append("svg")
-    .attr("width", "100%")
+    .attr("width", width)
     .attr("height", height);
     
+
 var borderPath = svg.append("rect")
 	.attr("x",0)
 	.attr("y",0)
@@ -100,6 +98,16 @@ var borderPath = svg.append("rect")
 	.attr("width", width)
 	.style("stroke", bordercolor)
 	.style("fill","none")
+	.style("stroke-width",border);
+	
+var statusBox = svg.append("rect")
+	.attr("x",10)
+	.attr("y",10)
+	.attr("height",statusHeight)
+	.attr("width", statusWidth)
+	.style("stroke", bordercolor)
+	.style("fill","white")
+	.style("fill-opacity","0.1")
 	.style("stroke-width",border);
 
 d3.json("miserables.json", function(error, graph) {
@@ -112,34 +120,35 @@ d3.json("miserables.json", function(error, graph) {
       .data(graph.links)
     .enter().append("line")
       .attr("class", "link")
-      .style("stroke", function(d){
+      .classed("slow", function(d){
       	if( d.pingTimeMicrosecs > "350" )
-      		return "red";
+      		return true;
       })
-      .style("stroke-dasharray", function(d){
+      .classed("not_connected", function(d){
       	if( d.isConnected == false)
-      		return "2,2";
+      		return true;
       });
-
-
 
   var node = svg.selectAll(".node")
       .data(graph.nodes)
     .enter().append("circle")
-      .attr("class" , function(d){
-      	switch(d.role)
-      	{
-      		case "mongos" : return "mongos";
-      			break;
-      		case "primary" : return "primary";
-      			break;
-      		case "secondary" : return "secondary";
-      			
-      	}
-      })
+      .attr("class", "node")
+      .classed("mongos", function(d){
+      	if( d.role == "mongos")
+      		return true;
+      	})
+      .classed("primary", function(d){
+      	if( d.role == "primary")
+      		return true;
+      	})
+      .classed("secondary", function(d){
+      	if( d.role == "secondary")
+      		return true;
+      	})
       .attr("r", radius)
       .on("click", click)
       .on("dblclick", dblclick)
+    //  .on("mousedown", function(d) { d.fixed = true; })
       .call(force.drag);
 
   node.append("title")
@@ -155,39 +164,20 @@ d3.json("miserables.json", function(error, graph) {
         .attr("cy", function(d) { return d.y; });
   });
 
-	function click() {
-		d3.select(this).attr("class",function(d){
-      		switch(d.role)
-      		{
-      			case "mongos" : return "mongos_selected";
-      				break;
-      			case "primary" : return "primary_selected";
-      				break;
-      			case "secondary" : return "secondary_selected";	
-      				break;
-      		}
-		});
+	function click() {		
+	//	d3.selectAll(".node").classed("selected", "false");
+		//d3.select(this).classed("selected", "true");
+		
 		var myId = d3.select(this).node().__data__._id;
 		d3.selectAll(".link").style("stroke-opacity", function(d){
 		if(d.source.index == myId)
-	//	if(myId == "localhost:30999")
-				return "1.0";
+			return "1.0";
 		});
 	}
 	
 	function dblclick() {
-		d3.select(this).attr("class",function(d){
-      		switch(d.role)
-      		{
-      			case "mongos" : return "mongos";
-      				break;
-      			case "primary" : return "primary";
-      				break;
-      			case "secondary" : return "secondary";	
-      				break;
-      		}
-		});
-		d3.selectAll(".link").style("stroke-opacity", "0.1");
+	//	d3.select(this).classed("selected","false");
+		d3.selectAll(".link").style("stroke-opacity", "0.05");
 	}
 
 });
