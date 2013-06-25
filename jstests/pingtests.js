@@ -133,6 +133,7 @@ function pingShardedCluster( host , verbosity ) {
    
     buildGraph( nodes , edges );   
 
+printjson(edges);
     var graph = {};
     var curr_date = new Date();
     graph["currentTime"] = curr_date.toUTCString(); 
@@ -143,9 +144,9 @@ function pingShardedCluster( host , verbosity ) {
     var diagnosis = makeDiagnosis( nodes , edges );
     var userView = buildUserView( diagnosis , verbosity ); 
 
-//    printjson( graph ); 
+ //   printjson( graph ); 
 //    printjson( diagnosis );
-    printjson( userView );
+//    printjson( userView );
 
 }
 
@@ -504,6 +505,7 @@ function getMongosServers( config , nodes , index ){
 	newNode["hostname"] = doc["_id"];
 	newNode["machine"] = ""; //to be expanded later
 	newNode["process"] = "mongos";	
+	newNode["role"] = "mongos";	
 	nodes.push(newNode); 
     });
     return index;
