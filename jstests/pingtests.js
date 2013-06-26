@@ -1,5 +1,6 @@
-
-var historicalData = new Array();
+var history = {};
+history["snapshots"] = new Array();
+history["listOfIds"] = new Array();
 
 /*stand-in names for strings used in output*/
 var allConn = "allConnections"; 
@@ -9,7 +10,6 @@ var mongos = "mongos";
 var config = "config";
 var primary = "primary";
 var secondary = "secondary";
-var serverTypes = [mongos, config, primary, secondary];
 var connReqsMet =  "connReqsMet";
 var req = "required";
 var rec = "recommended";
@@ -98,8 +98,8 @@ function createShardedCluster() {
     // ShardingTest = function( testName, numShards, verboseLevel, numMongos, otherParams )
     // testName is the cluster name	
     //s = new ShardingTest( "shard1" , 3 , 0 , 3 );
-    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , shards:6 , config:3 } );
-//    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
+//    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , shards:6 , config:3 } );
+    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
    return s;			
 
 }
@@ -124,7 +124,7 @@ function pingShardedCluster( host , verbosity ) {
     }
 
     var nodes = new Array();   
-    var edges = new Array();
+    var edges = {};
     var index = 0; 
 
     index = getShardServers( configDB , nodes , index );
@@ -133,8 +133,6 @@ function pingShardedCluster( host , verbosity ) {
    
     buildGraph( nodes , edges );   
 
-    printjson(edges);
-   
     var graph = {};
     var curr_date = new Date();
     graph["currentTime"] = curr_date.toUTCString(); 
@@ -142,8 +140,8 @@ function pingShardedCluster( host , verbosity ) {
     graph["edges"] = edges;
     saveSnapshot(graph);
 
-    var diagnosis = makeDiagnosis( nodes , edges );
-    var userView = buildUserView( diagnosis , verbosity ); 
+//    var diagnosis = makeDiagnosis( nodes , edges );
+//    var userView = buildUserView( diagnosis , verbosity ); 
 
  //   printjson( graph ); 
 //    printjson( diagnosis );
@@ -256,13 +254,13 @@ function makeDiagnosis( nodes , edges ){
     nodes.map( function(node){
     	if( node["process"] == "mongos"){
 	    var newNode = {};
-	    newNode["hostName"] = node["hostname"];
+	    newNode["hostName"] = node["hostName"];
 	    newNode["status"] = diagnose( node[id] , nodes , edges ); 
 	    diagnosis["mongos"].push(newNode);     
 	}	
 	else if( node["process"] == "mongod" && node["role"] == "config" ){
 	    var newNode = {};
-	    newNode["hostName"] = node["hostname"];
+	    newNode["hostName"] = node["hostName"];
 	    newNode["status"] = diagnose( node[id] , nodes , edges ); 
 	    diagnosis["config"].push(newNode);     
 	}	
@@ -276,14 +274,14 @@ function makeDiagnosis( nodes , edges ){
 		newShard["primary"] = new Array();
 		newShard["secondary"] = new Array();
 		var newNode = {};
-		newNode["hostName"] = node["hostname"];
+		newNode["hostName"] = node["hostName"];
 		newNode["status"] = diagnose( node[id] , nodes , edges );	
 		newShard[ node["role"] ].push(newNode);	
 		diagnosis["shards"].push(newShard);
 	    }
 	    else{
 		var newNode = {};
-		newNode["hostName"] = node["hostname"];
+		newNode["hostName"] = node["hostName"];
 		newNode["status"] = diagnose( node[id] , nodes , edges );	
 		diagnosis["shards"][shardIndex][ node["role"] ].push(newNode);
 		 
@@ -334,13 +332,12 @@ function diagnoseShard( node ){
     myStatus["errors"] = errors;
  
     return myStatus;	
-
-
 }
 
 var ERR = {
     "MISSING_REQ_CONNECTION" : "Missing required connection at ",
     "MISSING_REC_CONNECTION" : "Missing recommended connection at ",
+    "CLIENT_CONN_ERROR" : "Client unable to make connection to "
 }
 
 var reqConnChart = {
@@ -371,7 +368,7 @@ function getRoleFromId( myID , nodes ){
 function getHostFromId( myID , nodes ){
     for(var i=0; i<nodes.length; i++){
 	if( nodes[i][ id ] == myID )
-	    return nodes[i]["hostname"];
+	    return nodes[i]["hostName"];
     } 
 }
 
@@ -450,38 +447,75 @@ function pingShardedReplSet( host ) {
 
 //Although the {ping} function takes an array of hosts to ping, this function
 //pings each node one at a time (passes an array of one element to {ping})
+//for a few reasons:
+    // 1) forwarding in the ping function has not been implemented yet
+    // 2) 
+function buildGraph( nodes , edges ){
+    nodes.map( function(srcNode) {
+	edges[ srcNode[id] ] = {}; 
+	nodes.map( function(tgtNode) {	
+	    if(srcNode[id] != tgtNode[id]){ 
+		var newEdge = {};
+		try{	
+		    var conn = new Mongo( srcNode["hostName"] );
+		    var admin = conn.getDB("admin");
+		    var pingInfo = admin.runCommand( { "ping" : 1, hosts : [tgtNode["hostName"]] } );
+		    if( pingInfo[ tgtNode["hostName"] ][ "isConnected" ] == false){
+			newEdge["isConnected"] = false;
+			newEdge["errmsg"] = pingInfo[ tgtNode["hostName"] ][ "errmsg" ];	
+		    }
+		    else{
+			newEdge["isConnected"] = true;
+			newEdge["pingTimeMicrosecs"] = pingInfo[ tgtNode["hostName"] ][ "pingTimeMicrosecs" ]; 
+			//more ping info can be added here later 
+		    }
+		    edges[ srcNode[id] ][ tgtNode[id] ] = newEdge;	    
+		}
+		catch(e){
+		    edges[ srcNode[id] ][ tgtNode[id] ] = ERR["CLIENT_CONN_ERR"] + tgtNode["hostName"];
+		   // edges[ srcNode[id] ][ tgtNode[id] ] = e;
+		} 
+	    }
+	});
+    });
+}
+/*
+//Although the {ping} function takes an array of hosts to ping, this function
+//pings each node one at a time (passes an array of one element to {ping})
 //because the edges array is to be built in a format of source-target pairs
 //rather than a source-[list of targets] format
-function buildGraph( nodes , edges ){
-    nodes.map( function(srcNode) { 
+function oldbuildGraph( nodes , edges ){
+    nodes.map( function(srcNode) {
 	nodes.map( function(tgtNode) {	
 	    if(srcNode[id] != tgtNode[id]){ 
 		var newEdge = {};
 		newEdge[src] = srcNode[id];
 		newEdge[tgt] = tgtNode[id];
 		try{	
-		    var conn = new Mongo( srcNode["hostname"] );
+		    var conn = new Mongo( srcNode["hostName"] );
 		    var admin = conn.getDB("admin");
-		    var pingInfo = admin.runCommand( { "ping" : 1, hosts : [tgtNode["hostname"]] } );
-		    if( pingInfo[ tgtNode["hostname"] ][ "isConnected" ] == false){
+		    var pingInfo = admin.runCommand( { "ping" : 1, hosts : [tgtNode["hostName"]] } );
+		    if( pingInfo[ tgtNode["hostName"] ][ "isConnected" ] == false){
 			newEdge["isConnected"] = false;
-			newEdge["errmsg"] = pingInfo[ tgtNode["hostname"] ][ "errmsg" ];	
+			newEdge["errmsg"] = pingInfo[ tgtNode["hostName"] ][ "errmsg" ];	
 		    }
 		    else{
 			newEdge["isConnected"] = true;
-			newEdge["pingTimeMicrosecs"] = pingInfo[ tgtNode["hostname"] ][ "pingTimeMicrosecs" ]; 
+			newEdge["pingTimeMicrosecs"] = pingInfo[ tgtNode["hostName"] ][ "pingTimeMicrosecs" ]; 
 			//more ping info can be added here later 
 		    }
 		    edges.push(newEdge);
 		}
 		catch(e){
-		    newEdge["isConnected"] = false;
-		    newEdge["errmsg"] = e;	
+		    // these are fundamentally WRONG. it's a client connection error, not ping error 
+		    // newEdge["isConnected"] = false;
+		    // newEdge["errmsg"] = e;	
 		} 
 	    }
 	});
     });
 }
+*/
 
 function getConfigServers( config , nodes , index ){
 
@@ -490,7 +524,7 @@ function getConfigServers( config , nodes , index ){
 	var newNode = {};
 	newNode[id] = index;
 	index++;
-	newNode["hostname"] = configSvr;
+	newNode["hostName"] = configSvr;
 	newNode["machine"] = ""; //to be expanded later
 	newNode["process"] = "mongod";
 	nodes.push(newNode);
@@ -503,7 +537,7 @@ function getMongosServers( config , nodes , index ){
 	var newNode = {};
 	newNode[id] = index;
 	index++;
-	newNode["hostname"] = doc["_id"];
+	newNode["hostName"] = doc["_id"];
 	newNode["machine"] = ""; //to be expanded later
 	newNode["process"] = "mongos";	
 	newNode["role"] = "mongos";	
@@ -525,7 +559,7 @@ function getShardServers( configDB , nodes , index ){
 		var newNode = {};
 		newNode[id] = index;
 		index++;
-		newNode["hostname"] = hosts[i];
+		newNode["hostName"] = hosts[i];
 		newNode["machine"] = ""; //to be expanded later	
 		newNode["process"] = "mongod"; 
 		if(i == 0)
@@ -551,7 +585,7 @@ function getShardServers( configDB , nodes , index ){
 	    var newNode = {};
 	    newNode[id] = index;
 	    index++;
-	    newNode["hostname"] = doc["host"] 
+	    newNode["hostName"] = doc["host"] 
 	    newNode["machine"] = ""; //to be expanded later
 	    newNode["process"] = "mongod";
 	    nodes.push(newNode);	
@@ -561,15 +595,16 @@ function getShardServers( configDB , nodes , index ){
 }
 
 function saveSnapshot( graph ){
-    historicalData.push( graph ); 
+    history["snapshots"].push( graph ); 
 }
 
 function showHistoricalData(){
     var times = new Array();
-    historicalData.map( function(snapshot){
+    history["snapshots"].map( function(snapshot){
 	times.push(snapshot["currentTime"]);
     }); 
     printjson( times );
-    //printjson( historicalData );
+    //printjson( history );
 }
+
 
