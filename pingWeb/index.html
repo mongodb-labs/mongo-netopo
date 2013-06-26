@@ -7,7 +7,6 @@
 body{
 	background-color:#261305;
 	font-family: Arial;
-	font-size: 30px;
 	color: white;
 	padding: 20px;
 	}
@@ -56,12 +55,13 @@ body{
 <body>
 <script src="http://d3js.org/d3.v3.min.js"></script>
 
-
-
+<font style="font-size: 30px;">
 Visualization of a Sharded Cluster Network
-<br/>
+</font>
+<br/><br/>
 
 <form action="submitping.php" method="post">
+Server name of cluster member: <input type="text" name="hostname">
 <input type="submit" name="submit" value="Ping Cluster">
 </form>
 
@@ -70,7 +70,7 @@ Visualization of a Sharded Cluster Network
 
 
 <script>
-
+/*
 var width = 1000,
     height = 600;
 var statusHeight = 300;
@@ -181,5 +181,5 @@ d3.json("miserables.json", function(error, graph) {
 	}
 
 });
-
+*/
 </script>

@@ -133,7 +133,8 @@ function pingShardedCluster( host , verbosity ) {
    
     buildGraph( nodes , edges );   
 
-printjson(edges);
+    printjson(edges);
+   
     var graph = {};
     var curr_date = new Date();
     graph["currentTime"] = curr_date.toUTCString(); 
