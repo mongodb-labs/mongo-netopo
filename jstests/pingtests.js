@@ -464,9 +464,10 @@ function buildGraph( nodes , edges ){
 		    }
 		    else{
 			newEdge["isConnected"] = true;
-			newEdge["pingTimeMicrosecs"] = pingInfo[ tgtNode["hostName"] ][ "pingTimeMicrosecs" ]; 
+			newEdge["pingTimeMicrosecs"] = pingInfo[ tgtNode["hostName"] ]["pingTimeMicrosecs"]; 
 			//more ping info can be added here later 
 		    }
+		    newEdge["numSocketExceptions"] = pingInfo[tgtNode["hostName"] ]["numSocketExceptions"]; 
 		    edges[ srcNode[id] ][ tgtNode[id] ] = newEdge;	    
 		}
 		catch(e){
@@ -596,7 +597,9 @@ function getShardServers( configDB , nodes , index ){
 function recordNewNodes( nodes ){
     nodes.map( function(node){
 	if( history["allNodes"][ node[id] ] == null)
-	    history["allNodes"][ node[id] ] = node["hostName"] + "_" + node["process"] + "_" + node["machineName"];
+	    history["allNodes"][ node[id] ] = node["hostName"]  
+		+ "_" + node["process"] 
+		+ "_" + node["machineName"];
     });
 }
 
@@ -637,28 +640,31 @@ function calculateStats(){
 	}	
     }
 
-    // max ping time, min ping time, num ping attempts, num successful, num failed
+    // max ping time, min ping time, num ping attempts, num successful, num failed, num socketexceptions
     for(var moment in history["snapshots"]){	
 	var snapshot = history["snapshots"][moment];	
 	for( var i in history["allNodes"] ){
 	    for( var j in history["allNodes"] ){
-    		if( snapshot["edges"][i][j] != null ){
+    		if( snapshot["edges"][i][j] != null ){ //if node existed in this snapshot
 		    edgeStats[i][j]["numPingAttempts"]++;
-		    if( snapshot["edges"][i][j]["isConnected"] )
+		    edgeStats[i][j]["numSocketExceptions"] = parseInt(edgeStats[i][j]["numSocketExceptions"])
+			+ parseInt(snapshot["edges"][i][j]["numSocketExceptions"]);
+		    if( snapshot["edges"][i][j]["isConnected"] ){
 			edgeStats[i][j]["numSuccessful"]++;
+			var pingTime = snapshot["edges"][i][j]["pingTimeMicrosecs"]; 
+			if( pingTime > edgeStats[i][j]["maxPingTimeMicrosecs"])
+			    edgeStats[i][j]["maxPingTimeMicrosecs"] = pingTime;	
+			if( pingTime < edgeStats[i][j]["minPingTimeMicrosecs"])
+			    edgeStats[i][j]["minPingTimeMicrosecs"] = pingTime;	
+			edgeStats[i][j]["sumPingTimeMicrosecs"] = 
+			    parseInt(edgeStats[i][j]["sumPingTimeMicrosecs"]) + parseInt(pingTime);	
+		    }
 		    else
 			edgeStats[i][j]["numFailed"]++; 
-		    var pingTime = snapshot["edges"][i][j]["pingTimeMicrosecs"]; 
-		    if( pingTime > edgeStats[i][j]["maxPingTimeMicrosecs"])
-			edgeStats[i][j]["maxPingTimeMicrosecs"] = pingTime;	
-		    if( pingTime < edgeStats[i][j]["minPingTimeMicrosecs"])
-			edgeStats[i][j]["minPingTimeMicrosecs"] = pingTime;	
-		    edgeStats[i][j]["sumPingTimeMicrosecs"] = 
-			parseInt(edgeStats[i][j]["sumPingTimeMicrosecs"]) + parseInt(pingTime);	
 		}
 	    }
-	}
-    }	
+	}	
+    }
 
     // avg ping time and percentage connected 
     for( var i in history["allNodes"] ){
@@ -695,5 +701,47 @@ function calculateStats(){
 
 
     printjson(edgeStats[5][0]);
+}
+
+//deltas are defined as the change from the previous time point to the current time point
+function calculateDeltas(){
+
+    var deltas = {};   
+    var count=0;
+    var prevSnapshot;
+    var prevMoment; 
+    for( var moment in history["snapshots"] ){	
+	currSnapshot = history["snapshots"][moment];	
+	if(count != 0){
+	    var prevSnapshot = history["snapshots"][prevMoment];
+	    deltas[ moment ] = {};
+	    deltas[ moment ]["prevTime"] = prevMoment;
+	    deltas[ moment ]["newErrors"] = new Array();
+	    deltas[ moment ]["newWarnings"] = new Array();
+	    deltas[ moment ]["newNodes"] = new Array();
+	    deltas[ moment ]["removedErrors"] = new Array();
+	    deltas[ moment ]["removedWarnings"] = new Array();
+	    deltas[ moment ]["removedNodes"] = new Array(); 
+	    for( var i in history["allNodes"] ){
+		for( var j in history["allNodes"] ){
+		   
+		}
+	    }
+	}
+	prevMoment = moment; 
+	count++;  
+    }		
+
+    if(count < 2)
+	print("Not enough snapshots to calculate deltas. Please ping cluster at least twice.");
+    else
+	printjson(deltas); 
+
 
 }
+
+
+
+
+
+

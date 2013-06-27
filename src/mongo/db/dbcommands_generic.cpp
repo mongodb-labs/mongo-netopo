@@ -23,7 +23,8 @@
 #include "mongo/client/parallel.h"
 #include "mongo/client/connpool.h"
 #include <sstream>
- 
+#include "mongo/util/assert_util.h"
+
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/dbclient_rs.h"
 #include "mongo/db/auth/action_set.h"
@@ -151,63 +152,65 @@ namespace mongo {
 
 	virtual bool run(const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
             // IMPORTANT: Don't put anything in here that might lock db - including authentication
-		
-		//do a simple ping unless a "deep" ping is requested
-		if(!(cmdObj["hosts"].trueValue()))
-			return true;
+	    
+	    //do a simple ping unless a "deep" ping is requested
+	    if(!(cmdObj["hosts"].trueValue()))
+		    return true;
 
-		using namespace bson;
-		
-        	//result.appendDate( "currentTime" , jsTime() );
+	    using namespace bson;
+	    
+	    //result.appendDate( "currentTime" , jsTime() );
 
-		vector<BSONElement> v = cmdObj.getField("hosts").Array();
-		BSONObj outCommand = BSON("ping" << 1 << "deep" << 0);
-		string db = "admin";
-	
-		//for each host:port in the array
-		for(vector<BSONElement>::iterator it = v.begin(), end = v.end(); it!= end; ++it)
-		{
-			BSONObjBuilder curr;
-			HostAndPort hp = it->String();
-			DBClientConnection dbc;
-			
+	    vector<BSONElement> v = cmdObj.getField("hosts").Array();
+	    BSONObj outCommand = BSON("ping" << 1 << "deep" << 0);
+	    string db = "admin";
+    
+	    //for each host:port in the array
+	    for(vector<BSONElement>::iterator it = v.begin(), end = v.end(); it!= end; ++it)
+	    {
+		BSONObjBuilder currServer;
+		HostAndPort hp = it->String();
+		DBClientConnection dbc;
+		
+		int numSocketExceptions = 0;
+		const int retryMax = 3;
+		for (int retryCount = 1; retryCount <= retryMax; ++retryCount) {
+    		    try{	
 			string connInfo;
 			BSONObj pingInfo;
-		
-			if(dbc.connect(hp.toString(true), connInfo))	
-			{				
-				curr.append("isConnected" , true );
-				if(connInfo != "")
-					curr.append("connInfo" , connInfo);	
-			
-				//time a ping	
-				using namespace boost::posix_time;
-				
-				ptime time_start(microsec_clock::local_time());	
-				dbc.runCommand(db, outCommand, pingInfo);
-				ptime time_end(microsec_clock::local_time());
-			
-				time_duration duration(time_end - time_start);
-				std::stringstream strstream;
-				strstream << duration.total_microseconds();
-		
-				curr.append("pingTimeMicrosecs", strstream.str()); 
-				if(pingInfo.toString().size() > 11) //if more than { "ok" : 1 }
-					curr.append("pingInfo", pingInfo);
-
-				//other connection diagnostics here eventually
+			bool connected = dbc.connect(hp.toString(true), connInfo);	
+			throw SocketException( SocketException::CONNECT_ERROR  , "" );	
+			if(connected) {				
+			    currServer.append("isConnected" , true );
+			    if(connInfo != "")
+				currServer.append("connInfo" , connInfo);	
+			    //time a ping	
+			    using namespace boost::posix_time;
+			    ptime time_start(microsec_clock::local_time());	
+			    dbc.runCommand(db, outCommand, pingInfo);
+			    ptime time_end(microsec_clock::local_time());
+			    time_duration duration(time_end - time_start);
+			    std::stringstream strstream;
+			    strstream << duration.total_microseconds();
+			    currServer.append("pingTimeMicrosecs", strstream.str()); 
+			    if(pingInfo.toString().size() > 11) //if more than { "ok" : 1 }
+				currServer.append("pingInfo", pingInfo);
+			    //other connection diagnostics here eventually
 			}
-			else
-			{
-				curr.append("isConnected" , false );
-				curr.append("connInfo", connInfo);
+			else{
+			    currServer.append("isConnected" , false );
+			    currServer.append("connInfo", connInfo);
 			}
-	
-			result.append(it->String(), curr.obj());
+		    }
+		    catch (const SocketException&) {
+			numSocketExceptions++; 
+			continue; // try again
+		    }   
 		}
-
-		return true;
-
+		currServer.append("numSocketExceptions" , numSocketExceptions);
+		result.append(it->String(), currServer.obj());
+	    }
+	    return true;
 	}
     } pingCmd;
 
