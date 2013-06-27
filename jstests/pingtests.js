@@ -609,20 +609,22 @@ function calculateStats(){
     for( var srcName in history["allNodes"] ){
 	edgeStats[ srcName ] = {};
 	for( var tgtName in history["allNodes"]){
-	    edgeStats[ srcName ][ tgtName ] = {
-		"numPingAttempts" : 0,
-		"numSuccessful" : 0,
-		"numFailed" : 0,	
-		"numSocketExceptions" : 0,
-		"percentageIsConnected" :0,
-		"maxPingTimeMicrosecs" : null,
-		"minPingTimeMicrosecs" : null,
-		"sumPingTimeMicrosecs" : 0,
-		"avgPingTimeMicrosecs" : 0,
-		"pingTimeStdDeviation" : 0,
-		"subtractMeanSquaredSum" : 0
-	    };
-	}	
+	    if( srcName != tgtName){ 
+		edgeStats[ srcName ][ tgtName ] = {
+		    "numPingAttempts" : 0,
+		    "numSuccessful" : 0,
+		    "numFailed" : 0,	
+		    "numSocketExceptions" : 0,
+		    "percentageIsConnected" :0,
+		    "maxPingTimeMicrosecs" : null,
+		    "minPingTimeMicrosecs" : null,
+		    "sumPingTimeMicrosecs" : 0,
+		    "avgPingTimeMicrosecs" : 0,
+		    "pingTimeStdDeviation" : 0,
+		    "subtractMeanSquaredSum" : 0
+		};
+	    }
+    	}	
     }
     
     // max ping time, min ping time, num ping attempts, num successful, num failed, num socketexceptions
@@ -658,44 +660,57 @@ function calculateStats(){
 	    }
 	}	
     }
-/*
+
     // avg ping time and percentage connected 
-    for( var i in history["allNodes"] ){
-	for( var j in history["allNodes"] ){
-	    edgeStats[i][j]["avgPingTimeMicrosecs"] = 
-		parseFloat(edgeStats[i][j]["sumPingTimeMicrosecs"]) / parseFloat(edgeStats[i][j]["numSuccessful"]);	
-	    edgeStats[i][j]["percentageIsConnected"] = 
-		100 * parseFloat(edgeStats[i][j]["numSuccessful"]) / parseFloat(edgeStats[i][j]["numPingAttempts"]);	
+    for( var srcName in history["allNodes"] ){
+	for( var tgtName in history["allNodes"] ){
+	    if( srcName != tgtName){
+		edgeStats[ srcName ][ tgtName ]["avgPingTimeMicrosecs"] 
+		    = parseFloat( edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]) 
+		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numSuccessful"]);	
+		edgeStats[ srcName ][ tgtName ]["percentageIsConnected"] = 100  
+		    * parseFloat( edgeStats[ srcName ][ tgtName ]["numSuccessful"]) 
+		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numPingAttempts"]);	
+	    }
 	}
     }
 
     // standard deviation
     for(var moment in history["snapshots"]){	
-	var snapshot = history["snapshots"][moment];	
-	for( var i in history["allNodes"] ){
-	    for( var j in history["allNodes"] ){
-		if( snapshot["edges"][i][j] != null ){
-		    edgeStats[i][j]["subtractMeanSquaredSum"] = parseFloat(edgeStats[i][j]["subtractMeanSquaredSum"])
-			+ (parseFloat(snapshot["edges"][i][j]["pingTimeMicrosecs"]) 
-			    - parseFloat(edgeStats[i][j]["avgPingTimeMicrosecs"])) 
-			* (parseFloat(snapshot["edges"][i][j]["pingTimeMicrosecs"]) 
-			    - parseFloat(edgeStats[i][j]["avgPingTimeMicrosecs"])); 
+	var currEdges = history["snapshots"][moment]["edges"];	
+	for( var srcName in history["allNodes"] ){
+	    for( var tgtName in history["allNodes"] ){
+		if( srcName != tgtName){	
+		    var src = history["snapshots"][moment]["idMap"][ srcName ];	
+		    var tgt = history["snapshots"][moment]["idMap"][ tgtName ];
+		    if( currEdges[ src ][ tgt ] != null ){
+			edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"] 
+			    = parseFloat( edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"])
+			    + (parseFloat( currEdges[ src ][ tgt ]["pingTimeMicrosecs"]) 
+				- parseFloat( edgeStats[ srcName ][ tgtName ]["avgPingTimeMicrosecs"])) 
+			    * (parseFloat( currEdges[ src ][ tgt ]["pingTimeMicrosecs"]) 
+				- parseFloat( edgeStats[ srcName ][ tgtName ]["avgPingTimeMicrosecs"])); 
+		    }	  
 		} 
 	    }
 	}
     }
-    for( var i in history["allNodes"] ){
-	for( var j in history["allNodes"] ){
-	    edgeStats[i][j]["pingTimeStdDeviation"] = Math.sqrt(parseFloat(edgeStats[i][j]["subtractMeanSquaredSum"]) / parseFloat(edgeStats[i][j]["numSuccessful"]));  
-	    delete edgeStats[i][j]["subtractMeanSquaredSum"];	
-	    delete edgeStats[i][j]["sumPingTimeMicrosecs"]; 
+    for( var srcName in history["allNodes"] ){
+	for( var tgtName in history["allNodes"] ){
+	    if( srcName != tgtName ){
+		edgeStats[ srcName ][ tgtName ]["pingTimeStdDeviation"] 
+		    = Math.sqrt( parseFloat(edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"]) 
+		    / parseFloat(edgeStats[ srcName ][ tgtName ]["numSuccessful"]));  
+		delete edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"];	
+		delete edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]; 
+	    }	
 	}
     }
-*/
+
     var count=0;
     for (var moment in history["snapshots"])
 	count++;
-    if(count < 1)
+    if(count < 2)
 	print("Not enough snapshots to calculate statistics. Please ping cluster at least once.");
     else
 	printjson(edgeStats); 
