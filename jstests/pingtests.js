@@ -134,6 +134,7 @@ function pingCluster( host , verbosity ) {
     recordNewNodes( nodes );
    
     buildGraph( nodes , edges );   
+    printjson(edges);
 
     var graph = {};
     var curr_date = new Date();
@@ -630,8 +631,8 @@ function calculateStats(){
 		"numFailed" : 0,	
 		"numSocketExceptions" : 0,
 		"percentageIsConnected" :0,
-		"maxPingTimeMicrosecs" : 0,
-		"minPingTimeMicrosecs" : 999999999999,
+		"maxPingTimeMicrosecs" : null,
+		"minPingTimeMicrosecs" : null,
 		"sumPingTimeMicrosecs" : 0,
 		"avgPingTimeMicrosecs" : 0,
 		"pingTimeStdDeviation" : 0,
@@ -645,16 +646,16 @@ function calculateStats(){
 	var snapshot = history["snapshots"][moment];	
 	for( var i in history["allNodes"] ){
 	    for( var j in history["allNodes"] ){
-    		if( snapshot["edges"][i][j] != null ){ //if node existed in this snapshot
+    		if( snapshot["edges"][i][j] != null ){ //if edge existed in this snapshot
 		    edgeStats[i][j]["numPingAttempts"]++;
 		    edgeStats[i][j]["numSocketExceptions"] = parseInt(edgeStats[i][j]["numSocketExceptions"])
 			+ parseInt(snapshot["edges"][i][j]["numSocketExceptions"]);
-		    if( snapshot["edges"][i][j]["isConnected"] ){
+		    if( snapshot["edges"][i][j]["isConnected"] == true){
 			edgeStats[i][j]["numSuccessful"]++;
-			var pingTime = snapshot["edges"][i][j]["pingTimeMicrosecs"]; 
-			if( pingTime > edgeStats[i][j]["maxPingTimeMicrosecs"])
+			var pingTime = snapshot["edges"][i][j]["pingTimeMicrosecs"];
+			if( edgeStats[i][j]["maxPingTimeMicrosecs"] == null || pingTime > edgeStats[i][j]["maxPingTimeMicrosecs"])
 			    edgeStats[i][j]["maxPingTimeMicrosecs"] = pingTime;	
-			if( pingTime < edgeStats[i][j]["minPingTimeMicrosecs"])
+			if( edgeStats[i][j]["maxPingTimeMicrosecs"] == null || pingTime < edgeStats[i][j]["minPingTimeMicrosecs"])
 			    edgeStats[i][j]["minPingTimeMicrosecs"] = pingTime;	
 			edgeStats[i][j]["sumPingTimeMicrosecs"] = 
 			    parseInt(edgeStats[i][j]["sumPingTimeMicrosecs"]) + parseInt(pingTime);	

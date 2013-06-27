@@ -178,16 +178,18 @@ namespace mongo {
     		    try{	
 			string connInfo;
 			BSONObj pingInfo;
+//			throw SocketException( SocketException::CONNECT_ERROR  , "" );	
 			bool connected = dbc.connect(hp.toString(true), connInfo);	
-			throw SocketException( SocketException::CONNECT_ERROR  , "" );	
-			if(connected) {				
+		    	if(connected) {				
 			    currServer.append("isConnected" , true );
 			    if(connInfo != "")
 				currServer.append("connInfo" , connInfo);	
 			    //time a ping	
 			    using namespace boost::posix_time;
 			    ptime time_start(microsec_clock::local_time());	
+			    
 			    dbc.runCommand(db, outCommand, pingInfo);
+			    
 			    ptime time_end(microsec_clock::local_time());
 			    time_duration duration(time_end - time_start);
 			    std::stringstream strstream;
