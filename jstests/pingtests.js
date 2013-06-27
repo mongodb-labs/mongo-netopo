@@ -123,23 +123,23 @@ function pingCluster( host , verbosity ) {
 	return;
     }
 
-    var nodes = new Array();   
+    var nodes = {};   
     var edges = {};
+    var idMap = {};
     var index = 0; 
 
-    index = getShardServers( configDB , nodes , index );
-    index = getMongosServers( configDB , nodes , index );
-    index = getConfigServers( configDB , nodes , index );
-
-    recordNewNodes( nodes );
-   
+    index = getShardServers( configDB , nodes , index , idMap);
+    index = getMongosServers( configDB , nodes , index , idMap);
+    index = getConfigServers( configDB , nodes , index , idMap);
+  
     buildGraph( nodes , edges );   
     printjson(edges);
-
+/*
     var graph = {};
-    var curr_date = new Date();
-    saveSnapshot( curr_date.toUTCString() , nodes , edges);
-
+    var currDate = new Date();
+    var currTime = currDate.toUTCString(); 
+    saveSnapshot( currTime , nodes , edges);
+*/
 //    var diagnosis = makeDiagnosis( nodes , edges );
 //    var userView = buildUserView( diagnosis , verbosity ); 
 
@@ -336,7 +336,8 @@ function diagnoseShard( node ){
 var ERR = {
     "MISSING_REQ_CONNECTION" : "Missing required connection at ",
     "MISSING_REC_CONNECTION" : "Missing recommended connection at ",
-    "CLIENT_CONN_ERROR" : "Client unable to make connection to "
+    "CLIENT_CONN_ERROR" : "Client unable to make connection to ",
+    "NO_REPL_SET_NAME_NOTED" : "No replica set name noted"
 }
 
 var reqConnChart = {
@@ -450,133 +451,101 @@ function pingShardedReplSet( host ) {
     // 1) forwarding in the ping function has not been implemented yet
     // 2) 
 function buildGraph( nodes , edges ){
-    nodes.map( function(srcNode) {
-	edges[ srcNode[id] ] = {}; 
-	nodes.map( function(tgtNode) {	
-	    if(srcNode[id] != tgtNode[id]){ 
+    for( var srcNode in nodes){
+	edges[ srcNode ] = {}; 
+	for( var tgtNode in nodes ) {	
+	    if(srcNode != tgtNode){ 
 		var newEdge = {};
 		try{	
-		    var conn = new Mongo( srcNode["hostName"] );
+		    var conn = new Mongo( nodes[srcNode]["hostName"] );
 		    var admin = conn.getDB("admin");
-		    var pingInfo = admin.runCommand( { "ping" : 1, hosts : [tgtNode["hostName"]] } );
-		    if( pingInfo[ tgtNode["hostName"] ][ "isConnected" ] == false){
+		    var pingInfo = 
+			admin.runCommand( { "ping" : 1, hosts : [nodes[tgtNode]["hostName"]] } );
+		    if( pingInfo[ nodes[tgtNode]["hostName"] ][ "isConnected" ] == false){
 			newEdge["isConnected"] = false;
-			newEdge["errmsg"] = pingInfo[ tgtNode["hostName"] ][ "errmsg" ];	
+			newEdge["errmsg"] = pingInfo[ nodes[tgtNode]["hostName"] ][ "errmsg" ];	
 		    }
 		    else{
 			newEdge["isConnected"] = true;
-			newEdge["pingTimeMicrosecs"] = pingInfo[ tgtNode["hostName"] ]["pingTimeMicrosecs"]; 
+			newEdge["pingTimeMicrosecs"] = 
+			    pingInfo[ nodes[tgtNode]["hostName"] ]["pingTimeMicrosecs"]; 
 			//more ping info can be added here later 
 		    }
-		    newEdge["numSocketExceptions"] = pingInfo[tgtNode["hostName"] ]["numSocketExceptions"]; 
-		    edges[ srcNode[id] ][ tgtNode[id] ] = newEdge;	    
+		    newEdge["numSocketExceptions"] = 
+			pingInfo[ nodes[tgtNode]["hostName"] ]["numSocketExceptions"]; 
+		    edges[ srcNode ][ tgtNode ] = newEdge;	    
 		}
 		catch(e){
-		   // edges[ srcNode[id] ][ tgtNode[id] ] = ERR["CLIENT_CONN_ERR"] + tgtNode["hostName"];
-		   // edges[ srcNode[id] ][ tgtNode[id] ] = e;
-		   edges[ srcNode[id] ][ tgtNode[id] ] = null;
+		   // edges[ srcNode[id] ][ tgtNode[id] ] = 
+	//		ERR["CLIENT_CONN_ERR"] + tgtNode["hostName"];
+		   edges[ srcNode ][ tgtNode ] = e;
 		} 
 	    }
-	});
-    });
+	}
+    }
 }
-/*
-//Although the {ping} function takes an array of hosts to ping, this function
-//pings each node one at a time (passes an array of one element to {ping})
-//because the edges array is to be built in a format of source-target pairs
-//rather than a source-[list of targets] format
-function oldbuildGraph( nodes , edges ){
-    nodes.map( function(srcNode) {
-	nodes.map( function(tgtNode) {	
-	    if(srcNode[id] != tgtNode[id]){ 
-		var newEdge = {};
-		newEdge[src] = srcNode[id];
-		newEdge[tgt] = tgtNode[id];
-		try{	
-		    var conn = new Mongo( srcNode["hostName"] );
-		    var admin = conn.getDB("admin");
-		    var pingInfo = admin.runCommand( { "ping" : 1, hosts : [tgtNode["hostName"]] } );
-		    if( pingInfo[ tgtNode["hostName"] ][ "isConnected" ] == false){
-			newEdge["isConnected"] = false;
-			newEdge["errmsg"] = pingInfo[ tgtNode["hostName"] ][ "errmsg" ];	
-		    }
-		    else{
-			newEdge["isConnected"] = true;
-			newEdge["pingTimeMicrosecs"] = pingInfo[ tgtNode["hostName"] ][ "pingTimeMicrosecs" ]; 
-			//more ping info can be added here later 
-		    }
-		    edges.push(newEdge);
-		}
-		catch(e){
-		    // these are fundamentally WRONG. it's a client connection error, not ping error 
-		    // newEdge["isConnected"] = false;
-		    // newEdge["errmsg"] = e;	
-		} 
-	    }
-	});
-    });
-}
-*/
-
 function getConfigServers( config , nodes , index ){
 
     configSvr = db.configDB.getShardVersion()["configServer"];
     if(configSvr != null && configSvr != ""){
-	var newNode = {};
-	newNode[id] = index;
+    	var id = index;
 	index++;
-	newNode["hostName"] = configSvr;
-	newNode["machine"] = ""; //to be expanded later
-	newNode["process"] = "mongod";
-	nodes.push(newNode);
+	nodes[id] = {};
+	nodes[id]["hostName"] = doc["_id"];
+	nodes[id]["machine"] = ""; //to be expanded later
+	nodes[id]["process"] = "mongod";	
+    	nodes[id]["errors"] = new Array();
+	nodes[id]["warnings"] = new Array();
     }
     return index;
 }
 
 function getMongosServers( config , nodes , index ){
     config.mongos.find().forEach( function(doc) {
-	var newNode = {};
-	newNode[id] = index;
+	var id = index;
 	index++;
-	newNode["hostName"] = doc["_id"];
-	newNode["machine"] = ""; //to be expanded later
-	newNode["process"] = "mongos";	
-	newNode["role"] = "mongos";	
-	nodes.push(newNode); 
+	nodes[id] = {};
+	nodes[id]["hostName"] = doc["_id"];
+	nodes[id]["machine"] = ""; //to be expanded later
+	nodes[id]["process"] = "mongos";	
+    	nodes[id]["errors"] = new Array();
+	nodes[id]["warnings"] = new Array();
     });
     return index;
 }
 
 function getShardServers( configDB , nodes , index ){
-    
         configDB.shards.find().forEach( function(doc) {
-	
 	// if the shard is a replica set 
 	// do string parsing for shard servers
 	// originally in format "shard-01/lcalhost:30000,localhost:30001,localhost:30002"	
 	if( (startPos = doc["host"].indexOf("/") ) != -1) {
+	    var shardName = doc["host"].substring(0 , startPos); 
 	    var hosts = doc["host"].substring( startPos + 1 ).split(",");
 	    for(var i=0; i<hosts.length; i++) {
-		var newNode = {};
-		newNode[id] = index;
+		var id = index;
 		index++;
-		newNode["hostName"] = hosts[i];
-		newNode["machine"] = ""; //to be expanded later	
-		newNode["process"] = "mongod"; 
+		nodes[id] = {};
+		nodes[id]["hostName"] = hosts[i];
+		nodes[id]["machine"] = ""; //to be expanded later
+		nodes[id]["process"] = "mongod";
+		nodes[id]["errors"] = new Array();
+		nodes[id]["warnings"] = new Array();
+		nodes[id]["shardName"] = shardName;
 		if(i == 0)
-		    newNode["role"] = "primary";	
+		    nodes[id]["role"] = "primary";	
 		else
-		    newNode["role"] = "secondary";
+		    nodes[id]["role"] = "secondary";
 		try{
 		    var conn = new Mongo( hosts[i] );
 		    var admin = conn.getDB("admin");
 		    var masterStats = admin.runCommand( { ismaster : 1 } );
-		    newNode["replSetName"] = masterStats["setName"];
-		    nodes.push(newNode); 
+		    nodes[id]["replSetName"] = masterStats["setName"];
+		    //add check for no config server noted
 		}
 		catch(e){
-		    newNode["replSetName"] = "undefined";
-		    nodes.push(newNode);	 
+		    nodes[id]["replSetName"] = "undefined";
+		    nodes[id]["warnings"].push( ERR["NO_REPL_SET_NAME_NOTED"] );
 		}  
 	    }	
 	 }
@@ -595,19 +564,29 @@ function getShardServers( configDB , nodes , index ){
     return index;	
 }
 
-function recordNewNodes( nodes ){
-    nodes.map( function(node){
-	if( history["allNodes"][ node[id] ] == null)
-	    history["allNodes"][ node[id] ] = node["hostName"]  
-		+ "_" + node["process"] 
-		+ "_" + node["machineName"];
-    });
+function buildIdMap( nodes , idMap ){
+    for ( var node in nodes ){
+	idMap[ node["hostName"] + "_" + node["machine"] + "_" + node["process"] ] = node;
+    }
+}
+
+function recordNewNodes( nodes , time ){
 }
 
 function showAllNodes(){ printjson( history["allNodes"] ); }
 
 function saveSnapshot( time , nodes , edges ){
     history["snapshots"][ time ] = { "nodes" : nodes , "edges" : edges }; 
+
+    //add any new nodes to the list of all nodes that have ever existed 
+    nodes.map( function(node){
+	if( history["allNodes"][ node[id] ] == null)
+	    history["allNodes"][ node[id] ] = node["hostName"]  
+		+ "_" + node["process"] 
+		+ "_" + node["machineName"];
+	history["snapshots"][ time ]["listOfNodes"][ node[id] ];
+    });
+
 }
 
 function showHistory(){
@@ -655,7 +634,7 @@ function calculateStats(){
 			var pingTime = snapshot["edges"][i][j]["pingTimeMicrosecs"];
 			if( edgeStats[i][j]["maxPingTimeMicrosecs"] == null || pingTime > edgeStats[i][j]["maxPingTimeMicrosecs"])
 			    edgeStats[i][j]["maxPingTimeMicrosecs"] = pingTime;	
-			if( edgeStats[i][j]["maxPingTimeMicrosecs"] == null || pingTime < edgeStats[i][j]["minPingTimeMicrosecs"])
+			if( edgeStats[i][j]["minPingTimeMicrosecs"] == null || pingTime < edgeStats[i][j]["minPingTimeMicrosecs"])
 			    edgeStats[i][j]["minPingTimeMicrosecs"] = pingTime;	
 			edgeStats[i][j]["sumPingTimeMicrosecs"] = 
 			    parseInt(edgeStats[i][j]["sumPingTimeMicrosecs"]) + parseInt(pingTime);	
@@ -700,8 +679,13 @@ function calculateStats(){
 	}
     }
 
-
-    printjson(edgeStats[5][0]);
+    var count=0;
+    for (var moment in history["snapshots"])
+	count++;
+    if(count < 1)
+	print("Not enough snapshots to calculate statistics. Please ping cluster at least once.");
+    else
+	printjson(edgeStats[5][0]); 
 }
 
 //deltas are defined as the change from the previous time point to the current time point

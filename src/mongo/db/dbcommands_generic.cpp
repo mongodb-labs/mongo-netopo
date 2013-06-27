@@ -198,10 +198,12 @@ namespace mongo {
 			    if(pingInfo.toString().size() > 11) //if more than { "ok" : 1 }
 				currServer.append("pingInfo", pingInfo);
 			    //other connection diagnostics here eventually
+			    break;	
 			}
 			else{
 			    currServer.append("isConnected" , false );
 			    currServer.append("connInfo", connInfo);
+			    break;	
 			}
 		    }
 		    catch (const SocketException&) {
