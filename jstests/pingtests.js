@@ -127,25 +127,27 @@ function pingCluster( host , verbosity ) {
     var edges = {};
     var idMap = {};
     var index = 0; 
+    var environmentErrors = new Array();
+    var environmentWarnings = new Array();
 
     index = getShardServers( configDB , nodes , index , idMap);
     index = getMongosServers( configDB , nodes , index , idMap);
     index = getConfigServers( configDB , nodes , index , idMap);
   
     buildGraph( nodes , edges );   
-    printjson(edges);
-/*
-    var graph = {};
+    buildIdMap( nodes , idMap );
+
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
-    saveSnapshot( currTime , nodes , edges);
-*/
+    saveSnapshot( currTime , nodes , edges , idMap , environmentErrors , environmentWarnings);
+
 //    var diagnosis = makeDiagnosis( nodes , edges );
 //    var userView = buildUserView( diagnosis , verbosity ); 
 
 //    printjson( diagnosis );
 //    printjson( userView );
 
+    printjson( {"ok" : 1} );
 }
 
 function buildUserView( diagnosis , verbosity ){
@@ -476,7 +478,7 @@ function buildGraph( nodes , edges ){
 		    edges[ srcNode ][ tgtNode ] = newEdge;	    
 		}
 		catch(e){
-		   // edges[ srcNode[id] ][ tgtNode[id] ] = 
+	//	    edges[ srcNode[id] ][ tgtNode[id] ] = 
 	//		ERR["CLIENT_CONN_ERR"] + tgtNode["hostName"];
 		   edges[ srcNode ][ tgtNode ] = e;
 		} 
@@ -484,6 +486,7 @@ function buildGraph( nodes , edges ){
 	}
     }
 }
+
 function getConfigServers( config , nodes , index ){
 
     configSvr = db.configDB.getShardVersion()["configServer"];
@@ -565,46 +568,48 @@ function getShardServers( configDB , nodes , index ){
 }
 
 function buildIdMap( nodes , idMap ){
-    for ( var node in nodes ){
-	idMap[ node["hostName"] + "_" + node["machine"] + "_" + node["process"] ] = node;
+    for ( var curr in nodes ){
+	idMap[ nodes[curr]["hostName"] 
+	    + "_" + nodes[curr]["machine"] 
+	    + "_" + nodes[curr]["process"] ] 
+	    = curr;
     }
-}
-
-function recordNewNodes( nodes , time ){
 }
 
 function showAllNodes(){ printjson( history["allNodes"] ); }
 
-function saveSnapshot( time , nodes , edges ){
-    history["snapshots"][ time ] = { "nodes" : nodes , "edges" : edges }; 
-
+function saveSnapshot( time , nodes , edges , idMap , environmentErrors , environmentWarnings){
+    history["snapshots"][ time ] = { 
+	"nodes" : nodes , 
+	"edges" : edges ,
+	"idMap" : idMap ,
+	"environmentErrors" : environmentErrors ,
+	"environmentWarnings" : environmentWarnings
+	}; 
     //add any new nodes to the list of all nodes that have ever existed 
-    nodes.map( function(node){
-	if( history["allNodes"][ node[id] ] == null)
-	    history["allNodes"][ node[id] ] = node["hostName"]  
-		+ "_" + node["process"] 
-		+ "_" + node["machineName"];
-	history["snapshots"][ time ]["listOfNodes"][ node[id] ];
-    });
-
+    for ( var curr in idMap )
+	if( history["allNodes"][ curr ] == null)
+	    history["allNodes"][ curr ] = "alive"; 
+    //mark any nodes that previously existed but no longer exist as dead
+    for ( var curr in history["allNodes"] )
+	if( idMap[ curr ] == null )
+	    history["allNodes"][ curr ] = "dead";
 }
 
 function showHistory(){
     var times = new Array();
-    history["snapshots"].map( function(snapshot){
-	times.push(snapshot["currentTime"]);
-    }); 
+    for (var moment in history["snapshots"])
+	times.push( moment );
     printjson( times );
-    //printjson( history );
 }
 
 function calculateStats(){
 
     var edgeStats = {};
-    for( var i in history["allNodes"] ){
-	edgeStats[i] = {};
-	for( var j in history["allNodes"]){
-	    edgeStats[i][j] = {
+    for( var srcName in history["allNodes"] ){
+	edgeStats[ srcName ] = {};
+	for( var tgtName in history["allNodes"]){
+	    edgeStats[ srcName ][ tgtName ] = {
 		"numPingAttempts" : 0,
 		"numSuccessful" : 0,
 		"numFailed" : 0,	
@@ -619,33 +624,41 @@ function calculateStats(){
 	    };
 	}	
     }
-
+    
     // max ping time, min ping time, num ping attempts, num successful, num failed, num socketexceptions
     for(var moment in history["snapshots"]){	
-	var snapshot = history["snapshots"][moment];	
-	for( var i in history["allNodes"] ){
-	    for( var j in history["allNodes"] ){
-    		if( snapshot["edges"][i][j] != null ){ //if edge existed in this snapshot
-		    edgeStats[i][j]["numPingAttempts"]++;
-		    edgeStats[i][j]["numSocketExceptions"] = parseInt(edgeStats[i][j]["numSocketExceptions"])
-			+ parseInt(snapshot["edges"][i][j]["numSocketExceptions"]);
-		    if( snapshot["edges"][i][j]["isConnected"] == true){
-			edgeStats[i][j]["numSuccessful"]++;
-			var pingTime = snapshot["edges"][i][j]["pingTimeMicrosecs"];
-			if( edgeStats[i][j]["maxPingTimeMicrosecs"] == null || pingTime > edgeStats[i][j]["maxPingTimeMicrosecs"])
-			    edgeStats[i][j]["maxPingTimeMicrosecs"] = pingTime;	
-			if( edgeStats[i][j]["minPingTimeMicrosecs"] == null || pingTime < edgeStats[i][j]["minPingTimeMicrosecs"])
-			    edgeStats[i][j]["minPingTimeMicrosecs"] = pingTime;	
-			edgeStats[i][j]["sumPingTimeMicrosecs"] = 
-			    parseInt(edgeStats[i][j]["sumPingTimeMicrosecs"]) + parseInt(pingTime);	
+	var currEdges = history["snapshots"][moment]["edges"];	
+	for( var srcName in history["allNodes"] ){
+	    for( var tgtName in history["allNodes"] ){
+		if( srcName != tgtName){	
+		    var src = history["snapshots"][moment]["idMap"][ srcName ];	
+		    var tgt = history["snapshots"][moment]["idMap"][ tgtName ];
+		    if( currEdges[ src ][ tgt ] != null ){ //if edge existed in this snapshot
+			edgeStats[ srcName ][ tgtName ]["numPingAttempts"]++;
+			edgeStats[ srcName ][ tgtName ]["numSocketExceptions"] 
+			    = parseInt(edgeStats[ srcName ][ tgtName ]["numSocketExceptions"])
+			    + parseInt(currEdges[ src ][ tgt ]["numSocketExceptions"]);
+			if( currEdges[ src ][ tgt ]["isConnected"] == true){
+			    edgeStats[ srcName ][ tgtName ]["numSuccessful"]++;
+			    var pingTime = currEdges[ src ][ tgt ]["pingTimeMicrosecs"];
+			    if( edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"] == null 
+				|| pingTime > edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"])
+				edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"] = pingTime;	
+			    if( edgeStats[ srcName ][ tgtName ]["minPingTimeMicrosecs"] == null 
+				|| pingTime < edgeStats[ srcName ][ tgtName ]["minPingTimeMicrosecs"])
+				edgeStats[ srcName ][ tgtName ]["minPingTimeMicrosecs"] = pingTime;	
+			    edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]  
+				= parseInt(edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]) 
+				+ parseInt(pingTime);	
+			}
+			else
+			    edgeStats[ src ][ tgt ]["numFailed"]++; 
 		    }
-		    else
-			edgeStats[i][j]["numFailed"]++; 
 		}
 	    }
 	}	
     }
-
+/*
     // avg ping time and percentage connected 
     for( var i in history["allNodes"] ){
 	for( var j in history["allNodes"] ){
@@ -678,14 +691,14 @@ function calculateStats(){
 	    delete edgeStats[i][j]["sumPingTimeMicrosecs"]; 
 	}
     }
-
+*/
     var count=0;
     for (var moment in history["snapshots"])
 	count++;
     if(count < 1)
 	print("Not enough snapshots to calculate statistics. Please ping cluster at least once.");
     else
-	printjson(edgeStats[5][0]); 
+	printjson(edgeStats); 
 }
 
 //deltas are defined as the change from the previous time point to the current time point
