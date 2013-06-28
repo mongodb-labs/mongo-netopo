@@ -127,8 +127,6 @@ function pingCluster( host , verbosity ) {
     var edges = {};
     var idMap = {};
     var index = 0; 
-    var environmentErrors = new Array();
-    var environmentWarnings = new Array();
 
     index = getShardServers( configDB , nodes , index , idMap);
     index = getMongosServers( configDB , nodes , index , idMap);
@@ -139,14 +137,15 @@ function pingCluster( host , verbosity ) {
 
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
-    saveSnapshot( currTime , nodes , edges , idMap , environmentErrors , environmentWarnings);
+    saveSnapshot( currTime , nodes , edges , idMap , envErrors , envWarnings);
 
-//    var diagnosis = makeDiagnosis( nodes , edges );
+    var diagnosis = diagnose( nodes , edges );
 //    var userView = buildUserView( diagnosis , verbosity ); 
 
 //    printjson( diagnosis );
 //    printjson( userView );
 
+    printjson( diagnosis );
     printjson( {"ok" : 1} );
 }
 
@@ -245,65 +244,6 @@ function getStatus( array , nameType ){
 
     return myStatus;
 }
-
-function makeDiagnosis( nodes , edges ){
-    var diagnosis = {};
-    diagnosis["mongos"] = new Array();
-    diagnosis["shards"] = new Array();
-    diagnosis["config"] = new Array();
-
-    nodes.map( function(node){
-    	if( node["process"] == "mongos"){
-	    var newNode = {};
-	    newNode["hostName"] = node["hostName"];
-	    newNode["status"] = diagnose( node[id] , nodes , edges ); 
-	    diagnosis["mongos"].push(newNode);     
-	}	
-	else if( node["process"] == "mongod" && node["role"] == "config" ){
-	    var newNode = {};
-	    newNode["hostName"] = node["hostName"];
-	    newNode["status"] = diagnose( node[id] , nodes , edges ); 
-	    diagnosis["config"].push(newNode);     
-	}	
-	else if( node["process"] == "mongod" && 
-	    ( node["role"] == "primary" || node["role"] == "secondary" ) ){
-	    var shardIndex = indexOfJSONDoc(diagnosis["shards"],"shardName",node["replSetName"]);	
-	    if( shardIndex < 0 ){ 
-		var newShard = {}; 
-		newShard["shardName"] = node["replSetName"];
-		newShard["status"] = {};	
-		newShard["primary"] = new Array();
-		newShard["secondary"] = new Array();
-		var newNode = {};
-		newNode["hostName"] = node["hostName"];
-		newNode["status"] = diagnose( node[id] , nodes , edges );	
-		newShard[ node["role"] ].push(newNode);	
-		diagnosis["shards"].push(newShard);
-	    }
-	    else{
-		var newNode = {};
-		newNode["hostName"] = node["hostName"];
-		newNode["status"] = diagnose( node[id] , nodes , edges );	
-		diagnosis["shards"][shardIndex][ node["role"] ].push(newNode);
-		 
-	    }	
-	}
-    });
-  
-    diagnosis["shards"].map( function(node){
-	node["status"] = diagnoseShard( node ); 
-    }); 
-    
-    return diagnosis;
-}
-
-function indexOfJSONDoc( array , idType , myId ){
-    for(var i=0; i<array.length; i++){
-	if( array[i][idType] == myId)
-	    return i;
-    }
-    return -1;
-}
  
 function diagnoseShard( node ){ 
   
@@ -336,8 +276,8 @@ function diagnoseShard( node ){
 }
 
 var ERR = {
-    "MISSING_REQ_CONNECTION" : "Missing required connection at ",
-    "MISSING_REC_CONNECTION" : "Missing recommended connection at ",
+    "MISSING_REQ_CONNECTION" : "Missing required connection between ",
+    "MISSING_REC_CONNECTION" : "Missing recommended connection between ",
     "CLIENT_CONN_ERROR" : "Client unable to make connection to ",
     "NO_REPL_SET_NAME_NOTED" : "No replica set name noted"
 }
@@ -356,59 +296,61 @@ var recConnChart = {
     "secondary" : { "mongos":true , "config":true , "primary":true, "secondary":true }
 };
 
-function getRoleFromId( myID , nodes ){
-    for(var i=0; i<nodes.length; i++){
-	if( nodes[i][ id ] == myID){
-	    if( nodes[i]["process"] == "mongos")
-		return "mongos";
-	    else
-		return nodes[i]["role"];
-	} 
-    }
-}
-
-function getHostFromId( myID , nodes ){
-    for(var i=0; i<nodes.length; i++){
-	if( nodes[i][ id ] == myID )
-	    return nodes[i]["hostName"];
-    } 
-}
-
-function isReqConn( srcRole , tgtRole ){
+function isReqConn( src , tgt , nodes ){
+    var srcRole;
+    var tgtRole;
+    if( nodes[src]["process"] == "mongos")
+	srcRole = "mongos";
+    else
+	srcRole = nodes[src]["role"];
+    if( nodes[tgt]["process"] == "mongos")
+	tgtRole = "mongos";
+    else
+	tgtRole = nodes[tgt]["role"]; 
     return reqConnChart[ srcRole ][ tgtRole ];
 }
 
-function isRecConn( srcRole , tgtRole ){
+function isRecConn( src , tgt , nodes ){
+    var srcRole;
+    var tgtRole;
+    if( nodes[src]["process"] == "mongos") srcRole = "mongos";
+    else
+	srcRole = nodes[src]["role"];
+    if( nodes[tgt]["process"] == "mongos")
+	tgtRole = "mongos";
+    else
+	tgtRole = nodes[tgt]["role"]; 
     return recConnChart[ srcRole ][ tgtRole ];
 }
 
-function diagnose( srcId , nodes , edges  ){
-  
-    var errors = new Array();
-    var warnings = new Array();
+function diagnose( nodes , edges ){
+    var diagnosis = {};
+    var errors = {};
+    var warnings = {};
 
-    var srcRole = getRoleFromId( srcId , nodes );
-    edges.map( function(edge){
-        if(edge[src] == srcId){
-	    var tgtRole = getRoleFromId( edge[tgt] , nodes );	
-	    if( edge["isConnected"] == false){
-		if( isReqConn( srcRole , tgtRole ) )
-		    errors.push( ERR["MISSING_REQ_CONNECTION"] + getHostFromId( edge[tgt] , nodes ));
-		if( isRecConn( srcRole , tgtRole ) )
-		    warnings.push( ERR["MISSING_REC_CONNECTION"] + getHostFromId(edge[tgt] , nodes));
-	    }	
+    //check edges
+    for( var src in edges ){
+	for( var tgt in edges[src] ){
+	    if( edges[ src ][ tgt ]["isConnected"] == false){
+		if( isReqConn( src , tgt , nodes ) )
+		    errors.push( ERR["MISSING_REQ_CONNECTION"] 
+			+ nodes[src]["hostName"] + ", " + nodes[tgt]["hostName"]); 
+		if( isRecConn( src , tgt , nodes ) )
+		    warnings.push( ERR["MISSING_REC_CONNECTION"] 
+			+ nodes[src]["hostName"] + ", " + nodes[tgt]["hostName"]); 
+	    }
 	}
+    }
+
+    //check replica sets
+
+
+    diagnosis["errors"] = errors;
+    diagnosis["warnings"] = warnings;
+    
+    return diagnosis;
     });
 
-    var	memberStatus = {};
-    if( warnings.length == 0 && errors.length == 0)
-	memberStatus["ok"] = 1; 
-    else
-	memberStatus["ok"] = 0;
-    memberStatus["warnings"] = warnings;
-    memberStatus["errors"] = errors;
- 
-    return memberStatus;	
 }
 
 function pingShardedReplSet( host ) {
@@ -576,15 +518,17 @@ function buildIdMap( nodes , idMap ){
     }
 }
 
-function showAllNodes(){ printjson( history["allNodes"] ); }
+function showAllNodes(){ 
+    printjson( history["allNodes"] ); }
+}
 
-function saveSnapshot( time , nodes , edges , idMap , environmentErrors , environmentWarnings){
+function saveSnapshot( time , nodes , edges , idMap , errors , warnings){
     history["snapshots"][ time ] = { 
 	"nodes" : nodes , 
 	"edges" : edges ,
 	"idMap" : idMap ,
-	"environmentErrors" : environmentErrors ,
-	"environmentWarnings" : environmentWarnings
+	"errors" : errors ,
+	"warnings" : warnings
 	}; 
     //add any new nodes to the list of all nodes that have ever existed 
     for ( var curr in idMap )
@@ -604,7 +548,6 @@ function showHistory(){
 }
 
 function calculateStats(){
-
     var edgeStats = {};
     for( var srcName in history["allNodes"] ){
 	edgeStats[ srcName ] = {};
@@ -626,7 +569,6 @@ function calculateStats(){
 	    }
     	}	
     }
-    
     // max ping time, min ping time, num ping attempts, num successful, num failed, num socketexceptions
     for(var moment in history["snapshots"]){	
 	var currEdges = history["snapshots"][moment]["edges"];	
@@ -654,27 +596,27 @@ function calculateStats(){
 				+ parseInt(pingTime);	
 			}
 			else
-			    edgeStats[ src ][ tgt ]["numFailed"]++; 
+			    edgeStats[ srcName ][ tgtName ]["numFailed"]++; 
 		    }
 		}
 	    }
 	}	
     }
-
     // avg ping time and percentage connected 
     for( var srcName in history["allNodes"] ){
 	for( var tgtName in history["allNodes"] ){
 	    if( srcName != tgtName){
-		edgeStats[ srcName ][ tgtName ]["avgPingTimeMicrosecs"] 
-		    = parseFloat( edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]) 
-		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numSuccessful"]);	
+		if( edgeStats[ srcName ][ tgtName ]["numSuccessful"] > 0 ){
+		    edgeStats[ srcName ][ tgtName ]["avgPingTimeMicrosecs"] 
+			= parseFloat( edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]) 
+			/ parseFloat( edgeStats[ srcName ][ tgtName ]["numSuccessful"]);	
+		}	
 		edgeStats[ srcName ][ tgtName ]["percentageIsConnected"] = 100  
 		    * parseFloat( edgeStats[ srcName ][ tgtName ]["numSuccessful"]) 
 		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numPingAttempts"]);	
 	    }
 	}
     }
-
     // standard deviation
     for(var moment in history["snapshots"]){	
 	var currEdges = history["snapshots"][moment]["edges"];	
@@ -686,9 +628,9 @@ function calculateStats(){
 		    if( currEdges[ src ][ tgt ] != null ){
 			edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"] 
 			    = parseFloat( edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"])
-			    + (parseFloat( currEdges[ src ][ tgt ]["pingTimeMicrosecs"]) 
+			    + (parseFloat( currEdges[ src ][ tgt ]["pingTimeMicrosecs"] ) 
 				- parseFloat( edgeStats[ srcName ][ tgtName ]["avgPingTimeMicrosecs"])) 
-			    * (parseFloat( currEdges[ src ][ tgt ]["pingTimeMicrosecs"]) 
+			    * (parseFloat( currEdges[ src ][ tgt ]["pingTimeMicrosecs"] ) 
 				- parseFloat( edgeStats[ srcName ][ tgtName ]["avgPingTimeMicrosecs"])); 
 		    }	  
 		} 
@@ -706,11 +648,10 @@ function calculateStats(){
 	    }	
 	}
     }
-
     var count=0;
     for (var moment in history["snapshots"])
 	count++;
-    if(count < 2)
+    if(count < 1)
 	print("Not enough snapshots to calculate statistics. Please ping cluster at least once.");
     else
 	printjson(edgeStats); 
@@ -718,10 +659,8 @@ function calculateStats(){
 
 //deltas are defined as the change from the previous time point to the current time point
 function calculateDeltas(){
-
     var deltas = {};   
     var count=0;
-    var prevSnapshot;
     var prevMoment; 
     for( var moment in history["snapshots"] ){	
 	currSnapshot = history["snapshots"][moment];	
@@ -735,22 +674,20 @@ function calculateDeltas(){
 	    deltas[ moment ]["removedErrors"] = new Array();
 	    deltas[ moment ]["removedWarnings"] = new Array();
 	    deltas[ moment ]["removedNodes"] = new Array(); 
-	    for( var i in history["allNodes"] ){
-		for( var j in history["allNodes"] ){
-		   
-		}
-	    }
+	    for( var currNode in currSnapshot["idMap"] )
+		if( prevSnapshot["idMap"][ currNode ] == null )
+		    deltas[ moment ]["newNodes"].push( currNode );
+	    for( var prevNode in prevSnapshot["idMap"] )
+		if( currSnapshot["idMap"][ prevNode ] == null )
+		    deltas[ moment ]["removedNodes"].push( prevNode );	    	
 	}
 	prevMoment = moment; 
 	count++;  
     }		
-
     if(count < 2)
 	print("Not enough snapshots to calculate deltas. Please ping cluster at least twice.");
     else
 	printjson(deltas); 
-
-
 }
 
 
