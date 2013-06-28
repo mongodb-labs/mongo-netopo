@@ -134,15 +134,13 @@ function pingCluster( host , verbosity ) {
   
     buildGraph( nodes , edges );   
     buildIdMap( nodes , idMap );
-
+    var diagnosis = diagnose( nodes , edges );
+    
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
-    saveSnapshot( currTime , nodes , edges , idMap , envErrors , envWarnings);
+    saveSnapshot( currTime , nodes , edges , idMap , diagnosis["errors"] , diagnosis["warnings"]);
 
-    var diagnosis = diagnose( nodes , edges );
 //    var userView = buildUserView( diagnosis , verbosity ); 
-
-//    printjson( diagnosis );
 //    printjson( userView );
 
     printjson( diagnosis );
@@ -276,8 +274,8 @@ function diagnoseShard( node ){
 }
 
 var ERR = {
-    "MISSING_REQ_CONNECTION" : "Missing required connection between ",
-    "MISSING_REC_CONNECTION" : "Missing recommended connection between ",
+    "MISSING_REQ_CONNECTION" : "Missing required connection",
+    "MISSING_REC_CONNECTION" : "Missing recommended connection",
     "CLIENT_CONN_ERROR" : "Client unable to make connection to ",
     "NO_REPL_SET_NAME_NOTED" : "No replica set name noted"
 }
@@ -327,29 +325,24 @@ function diagnose( nodes , edges ){
     var diagnosis = {};
     var errors = {};
     var warnings = {};
-
+    
     //check edges
     for( var src in edges ){
 	for( var tgt in edges[src] ){
 	    if( edges[ src ][ tgt ]["isConnected"] == false){
 		if( isReqConn( src , tgt , nodes ) )
-		    errors.push( ERR["MISSING_REQ_CONNECTION"] 
-			+ nodes[src]["hostName"] + ", " + nodes[tgt]["hostName"]); 
+		    errors[ nodes[src]["key"] + " -> " + nodes[tgt]["key"] ]  =  ERR["MISSING_REQ_CONNECTION"]; 
 		if( isRecConn( src , tgt , nodes ) )
-		    warnings.push( ERR["MISSING_REC_CONNECTION"] 
-			+ nodes[src]["hostName"] + ", " + nodes[tgt]["hostName"]); 
+		    warnings[ nodes[src]["key"] + " -> " + nodes[tgt]["key"] ] = ERR["MISSING_REC_CONNECTION"]; 
 	    }
 	}
     }
-
     //check replica sets
-
 
     diagnosis["errors"] = errors;
     diagnosis["warnings"] = warnings;
     
     return diagnosis;
-    });
 
 }
 
@@ -441,6 +434,7 @@ function getConfigServers( config , nodes , index ){
 	nodes[id]["process"] = "mongod";	
     	nodes[id]["errors"] = new Array();
 	nodes[id]["warnings"] = new Array();
+	nodes[id]["key"] = nodes[id]["hostName"] + "_" + nodes[id]["machine"] + "_" + nodes[id]["process"];
     }
     return index;
 }
@@ -455,6 +449,7 @@ function getMongosServers( config , nodes , index ){
 	nodes[id]["process"] = "mongos";	
     	nodes[id]["errors"] = new Array();
 	nodes[id]["warnings"] = new Array();
+	nodes[id]["key"] = nodes[id]["hostName"] + "_" + nodes[id]["machine"] + "_" + nodes[id]["process"];
     });
     return index;
 }
@@ -477,6 +472,7 @@ function getShardServers( configDB , nodes , index ){
 		nodes[id]["errors"] = new Array();
 		nodes[id]["warnings"] = new Array();
 		nodes[id]["shardName"] = shardName;
+		nodes[id]["key"] = nodes[id]["hostName"] + "_" + nodes[id]["machine"] + "_" + nodes[id]["process"];
 		if(i == 0)
 		    nodes[id]["role"] = "primary";	
 		else
@@ -503,6 +499,7 @@ function getShardServers( configDB , nodes , index ){
 	    newNode["hostName"] = doc["host"] 
 	    newNode["machine"] = ""; //to be expanded later
 	    newNode["process"] = "mongod";
+	    nodes[id]["key"] = nodes[id]["hostName"] + "_" + nodes[id]["machine"] + "_" + nodes[id]["process"];
 	    nodes.push(newNode);	
 	}
     });
@@ -519,7 +516,7 @@ function buildIdMap( nodes , idMap ){
 }
 
 function showAllNodes(){ 
-    printjson( history["allNodes"] ); }
+    printjson( history["allNodes"] ); 
 }
 
 function saveSnapshot( time , nodes , edges , idMap , errors , warnings){
@@ -562,8 +559,8 @@ function calculateStats(){
 		    "maxPingTimeMicrosecs" : null,
 		    "minPingTimeMicrosecs" : null,
 		    "sumPingTimeMicrosecs" : 0,
-		    "avgPingTimeMicrosecs" : 0,
-		    "pingTimeStdDeviation" : 0,
+		    "avgPingTimeMicrosecs" : null,
+		    "pingTimeStdDeviation" : null,
 		    "subtractMeanSquaredSum" : 0
 		};
 	    }
@@ -622,10 +619,10 @@ function calculateStats(){
 	var currEdges = history["snapshots"][moment]["edges"];	
 	for( var srcName in history["allNodes"] ){
 	    for( var tgtName in history["allNodes"] ){
-		if( srcName != tgtName){	
+		if( srcName != tgtName && edgeStats[ srcName ][ tgtName ]["numSuccessful"] > 0){	
 		    var src = history["snapshots"][moment]["idMap"][ srcName ];	
 		    var tgt = history["snapshots"][moment]["idMap"][ tgtName ];
-		    if( currEdges[ src ][ tgt ] != null ){
+		    if( currEdges[ src ][ tgt ] != null ){ 
 			edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"] 
 			    = parseFloat( edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"])
 			    + (parseFloat( currEdges[ src ][ tgt ]["pingTimeMicrosecs"] ) 
@@ -640,9 +637,10 @@ function calculateStats(){
     for( var srcName in history["allNodes"] ){
 	for( var tgtName in history["allNodes"] ){
 	    if( srcName != tgtName ){
-		edgeStats[ srcName ][ tgtName ]["pingTimeStdDeviation"] 
-		    = Math.sqrt( parseFloat(edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"]) 
-		    / parseFloat(edgeStats[ srcName ][ tgtName ]["numSuccessful"]));  
+		if( edgeStats[ srcName ][ tgtName ]["numSuccessful"] > 0)
+		    edgeStats[ srcName ][ tgtName ]["pingTimeStdDeviation"] 
+			= Math.sqrt( parseFloat(edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"]) 
+			/ parseFloat(edgeStats[ srcName ][ tgtName ]["numSuccessful"])); 
 		delete edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"];	
 		delete edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]; 
 	    }	
@@ -663,23 +661,46 @@ function calculateDeltas(){
     var count=0;
     var prevMoment; 
     for( var moment in history["snapshots"] ){	
-	currSnapshot = history["snapshots"][moment];	
+	
 	if(count != 0){
+	    var currSnapshot = history["snapshots"][moment];	    
 	    var prevSnapshot = history["snapshots"][prevMoment];
+	    
+	    //set up this dif
 	    deltas[ moment ] = {};
 	    deltas[ moment ]["prevTime"] = prevMoment;
-	    deltas[ moment ]["newErrors"] = new Array();
+	    deltas[ moment ]["newErrors"] = new Array() 
 	    deltas[ moment ]["newWarnings"] = new Array();
 	    deltas[ moment ]["newNodes"] = new Array();
 	    deltas[ moment ]["removedErrors"] = new Array();
 	    deltas[ moment ]["removedWarnings"] = new Array();
 	    deltas[ moment ]["removedNodes"] = new Array(); 
-	    for( var currNode in currSnapshot["idMap"] )
+
+	    //check for added/removed nodes
+    	    for( var currNode in currSnapshot["idMap"] )
 		if( prevSnapshot["idMap"][ currNode ] == null )
 		    deltas[ moment ]["newNodes"].push( currNode );
 	    for( var prevNode in prevSnapshot["idMap"] )
 		if( currSnapshot["idMap"][ prevNode ] == null )
 		    deltas[ moment ]["removedNodes"].push( prevNode );	    	
+	
+	    //check for added/removed errors and warnings
+	    for( var currError in currSnapshot["errors"] )
+		if( prevSnapshot["errors"][ currError ] == null
+		    || prevSnapshot["errors"][ currError ] != currSnapshot["errors"][ currError ] )
+		    deltas[ moment ]["newErrors"].push( currError + ":" + currSnapshot["errors"][ currError ]);
+	    for( var prevError in prevSnapshot["errors"] )
+		if( currSnapshot["errors"][ prevError ] == null
+		    || currSnapshot["errors"][ prevError ] != prevSnapshot["errors"][ prevError ] )
+		    deltas[ moment ]["removedErrors"].push( prevError + ":" + prevSnapshot["errors"][ prevError ]); 
+    	    for( var currWarning in currSnapshot["warnings"] )
+		if( prevSnapshot["warnings"][ currWarning ] == null
+		    || prevSnapshot["warnings"][ currWarning ] != currSnapshot["warnings"][ currWarning ] )
+		    deltas[ moment ]["newWarnings"].push( currWarning + ":" + currSnapshot["warnings"][ currWarning ]);
+	    for( var prevWarning in prevSnapshot["warnings"] )
+		if( currSnapshot["warnings"][ prevWarning ] == null
+		    || currSnapshot["warnings"][ prevWarning ] != prevSnapshot["warnings"][ prevWarning ] )
+		    deltas[ moment ]["removedWarnings"].push( prevWarning + ":" + prevSnapshot["warnings"][ prevWarning ]); 
 	}
 	prevMoment = moment; 
 	count++;  
