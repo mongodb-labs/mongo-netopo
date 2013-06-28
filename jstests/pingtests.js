@@ -122,6 +122,13 @@ function pingCluster( host , verbosity ) {
 	printjson(e);
 	return;
     }
+    try{
+	var adminDB = conn.getDB("admin");
+    }
+    catch(e){
+	printjson(e);
+	return;
+    }
 
     var nodes = {};   
     var edges = {};
@@ -130,7 +137,7 @@ function pingCluster( host , verbosity ) {
 
     index = getShardServers( configDB , nodes , index , idMap);
     index = getMongosServers( configDB , nodes , index , idMap);
-    index = getConfigServers( configDB , nodes , index , idMap);
+    index = getConfigServers( adminDB , nodes , index , idMap);
   
     buildGraph( nodes , edges );   
     buildIdMap( nodes , idMap );
@@ -295,30 +302,11 @@ var recConnChart = {
 };
 
 function isReqConn( src , tgt , nodes ){
-    var srcRole;
-    var tgtRole;
-    if( nodes[src]["process"] == "mongos")
-	srcRole = "mongos";
-    else
-	srcRole = nodes[src]["role"];
-    if( nodes[tgt]["process"] == "mongos")
-	tgtRole = "mongos";
-    else
-	tgtRole = nodes[tgt]["role"]; 
-    return reqConnChart[ srcRole ][ tgtRole ];
+    return reqConnChart[ nodes[src]["role"] ][ nodes[tgt]["role"] ];
 }
 
 function isRecConn( src , tgt , nodes ){
-    var srcRole;
-    var tgtRole;
-    if( nodes[src]["process"] == "mongos") srcRole = "mongos";
-    else
-	srcRole = nodes[src]["role"];
-    if( nodes[tgt]["process"] == "mongos")
-	tgtRole = "mongos";
-    else
-	tgtRole = nodes[tgt]["role"]; 
-    return recConnChart[ srcRole ][ tgtRole ];
+    return recConnChart[ nodes[src]["role"] ][ nodes[tgt]["role"] ];
 }
 
 function diagnose( nodes , edges ){
@@ -422,19 +410,20 @@ function buildGraph( nodes , edges ){
     }
 }
 
-function getConfigServers( config , nodes , index ){
+function getConfigServers( adminDB , nodes , index ){
 
-    configSvr = db.configDB.getShardVersion()["configServer"];
+    configSvr = adminDB.runCommand( { getCmdLineOpts : 1 });
     if(configSvr != null && configSvr != ""){
     	var id = index;
 	index++;
 	nodes[id] = {};
-	nodes[id]["hostName"] = doc["_id"];
+	nodes[id]["hostName"] = configSvr["parsed"]["configdb"];
 	nodes[id]["machine"] = ""; //to be expanded later
 	nodes[id]["process"] = "mongod";	
     	nodes[id]["errors"] = new Array();
 	nodes[id]["warnings"] = new Array();
-	nodes[id]["key"] = nodes[id]["hostName"] + "_" + nodes[id]["machine"] + "_" + nodes[id]["process"];
+	nodes[id]["role"] = "config";
+    	nodes[id]["key"] = nodes[id]["hostName"] + "_" + nodes[id]["machine"] + "_" + nodes[id]["process"];
     }
     return index;
 }
@@ -446,7 +435,8 @@ function getMongosServers( config , nodes , index ){
 	nodes[id] = {};
 	nodes[id]["hostName"] = doc["_id"];
 	nodes[id]["machine"] = ""; //to be expanded later
-	nodes[id]["process"] = "mongos";	
+	nodes[id]["process"] = "mongos";
+	nodes[id]["role"] = "mongos";	
     	nodes[id]["errors"] = new Array();
 	nodes[id]["warnings"] = new Array();
 	nodes[id]["key"] = nodes[id]["hostName"] + "_" + nodes[id]["machine"] + "_" + nodes[id]["process"];
@@ -515,7 +505,9 @@ function buildIdMap( nodes , idMap ){
     }
 }
 
-function showAllNodes(){ 
+function showAllNodes( verbosity ){ 
+/*    if( verbosity == "v")
+	printjson(*/
     printjson( history["allNodes"] ); 
 }
 
@@ -529,8 +521,13 @@ function saveSnapshot( time , nodes , edges , idMap , errors , warnings){
 	}; 
     //add any new nodes to the list of all nodes that have ever existed 
     for ( var curr in idMap )
-	if( history["allNodes"][ curr ] == null)
-	    history["allNodes"][ curr ] = "alive"; 
+	if( history["allNodes"][ curr ] == null){
+	    history["allNodes"][ curr ] = {};
+	    history["allNodes"][ curr ]["status"] = "alive"; 
+	    history["allNodes"][ curr ]["previousRoles"] = {};
+	    history["allNodes"][ curr ]["currentRole"] = {};
+	    history["allNodes"][ curr ]["currentRole"]["role"] = nodes[ idMap[curr] ]["role"];
+	}
     //mark any nodes that previously existed but no longer exist as dead
     for ( var curr in history["allNodes"] )
 	if( idMap[ curr ] == null )
@@ -713,52 +710,73 @@ function calculateDeltas(){
 
 function calculateDeltasBetween( time1 , time2 ){
 
-    if( time2 < time1 ){
-	print("Please enter times in order (earlier , later)");
+    var deltas = {};   
+    var count=0;
+    var prevMoment; 
+
+    if( new Date(time1) == null  || new Date(time2) == null ){
+	print("Please enter valid Date strings");
 	return;
     }
-    var currSnapshot = history["snapshots"][ time1 ];	    
-    var prevSnapshot = history["snapshots"][ time2 ];
-    
-    //set up this dif
-    delta = {};
-    delta["newErrors"] = new Array() 
-    delta["newWarnings"] = new Array();
-    delta["newNodes"] = new Array();
-    delta["removedErrors"] = new Array();
-    delta["removedWarnings"] = new Array();
-    delta["removedNodes"] = new Array(); 
+	
+    if( time2 <= time1 ){
+	print("Please enter two distinct times in order (earlier , later)");
+	return;
+    }
 
-    //check for added/removed nodes
-    for( var currNode in currSnapshot["idMap"] )
-	if( prevSnapshot["idMap"][ currNode ] == null )
-	    delta["newNodes"].push( currNode );
-    for( var prevNode in prevSnapshot["idMap"] )
-	if( currSnapshot["idMap"][ prevNode ] == null )
-	    delta["removedNodes"].push( prevNode );	    	
+    for( var moment in history["snapshots"] ){	
+	if(count != 0 && moment >= time1 && moment <= time2){
+	    var currSnapshot = history["snapshots"][moment];	    
+	    var prevSnapshot = history["snapshots"][prevMoment];
+	    
+	    //set up this dif
+	    deltas[ moment ] = {};
+	    deltas[ moment ]["prevTime"] = prevMoment;
+	    deltas[ moment ]["newErrors"] = new Array() 
+	    deltas[ moment ]["newWarnings"] = new Array();
+	    deltas[ moment ]["newNodes"] = new Array();
+	    deltas[ moment ]["removedErrors"] = new Array();
+	    deltas[ moment ]["removedWarnings"] = new Array();
+	    deltas[ moment ]["removedNodes"] = new Array(); 
 
-    //check for added/removed errors and warnings
-    for( var currError in currSnapshot["errors"] )
-	if( prevSnapshot["errors"][ currError ] == null
-	    || prevSnapshot["errors"][ currError ] != currSnapshot["errors"][ currError ] )
-	    delta["newErrors"].push( currError + ":" + currSnapshot["errors"][ currError ]);
-    for( var prevError in prevSnapshot["errors"] )
-	if( currSnapshot["errors"][ prevError ] == null
-	    || currSnapshot["errors"][ prevError ] != prevSnapshot["errors"][ prevError ] )
-	    delta["removedErrors"].push( prevError + ":" + prevSnapshot["errors"][ prevError ]); 
-    for( var currWarning in currSnapshot["warnings"] )
-	if( prevSnapshot["warnings"][ currWarning ] == null
-	    || prevSnapshot["warnings"][ currWarning ] != currSnapshot["warnings"][ currWarning ] )
-	    delta["newWarnings"].push( currWarning + ":" + currSnapshot["warnings"][ currWarning ]);
-    for( var prevWarning in prevSnapshot["warnings"] )
-	if( currSnapshot["warnings"][ prevWarning ] == null
-	    || currSnapshot["warnings"][ prevWarning ] != prevSnapshot["warnings"][ prevWarning ] )
-	    delta["removedWarnings"].push( prevWarning + ":" + prevSnapshot["warnings"][ prevWarning ]); 
-    
-    printjson(delta);
+	    //check for added/removed nodes
+	    for( var currNode in currSnapshot["idMap"] )
+		if( prevSnapshot["idMap"][ currNode ] == null )
+		    deltas[ moment ]["newNodes"].push( currNode );
+	    for( var prevNode in prevSnapshot["idMap"] )
+		if( currSnapshot["idMap"][ prevNode ] == null )
+		    deltas[ moment ]["removedNodes"].push( prevNode );	    	
+	
+	    //check for added/removed errors and warnings
+	    for( var currError in currSnapshot["errors"] )
+		if( prevSnapshot["errors"][ currError ] == null
+		    || prevSnapshot["errors"][ currError ] != currSnapshot["errors"][ currError ] )
+		    deltas[ moment ]["newErrors"].push( currError + ":" + currSnapshot["errors"][ currError ]);
+	    for( var prevError in prevSnapshot["errors"] )
+		if( currSnapshot["errors"][ prevError ] == null
+		    || currSnapshot["errors"][ prevError ] != prevSnapshot["errors"][ prevError ] )
+		    deltas[ moment ]["removedErrors"].push( prevError + ":" + prevSnapshot["errors"][ prevError ]); 
+	    for( var currWarning in currSnapshot["warnings"] )
+		if( prevSnapshot["warnings"][ currWarning ] == null
+		    || prevSnapshot["warnings"][ currWarning ] != currSnapshot["warnings"][ currWarning ] )
+		    deltas[ moment ]["newWarnings"].push( currWarning + ":" + currSnapshot["warnings"][ currWarning ]);
+	    for( var prevWarning in prevSnapshot["warnings"] )
+		if( currSnapshot["warnings"][ prevWarning ] == null
+		    || currSnapshot["warnings"][ prevWarning ] != prevSnapshot["warnings"][ prevWarning ] )
+		    deltas[ moment ]["removedWarnings"].push( prevWarning + ":" + prevSnapshot["warnings"][ prevWarning ]); 
+	}
+	prevMoment = moment; 
+	count++;  
+    }		
+    if(count < 2)
+	print("Not enough snapshots to calculate deltas. Please provide at least two distinct times.");
+    else
+	printjson(deltas); 
 
 }
 
+function clearHistory(){
 
+}
 
 
