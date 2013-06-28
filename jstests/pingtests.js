@@ -711,7 +711,53 @@ function calculateDeltas(){
 	printjson(deltas); 
 }
 
+function calculateDeltasBetween( time1 , time2 ){
 
+    if( time2 < time1 ){
+	print("Please enter times in order (earlier , later)");
+	return;
+    }
+    var currSnapshot = history["snapshots"][ time1 ];	    
+    var prevSnapshot = history["snapshots"][ time2 ];
+    
+    //set up this dif
+    delta = {};
+    delta["newErrors"] = new Array() 
+    delta["newWarnings"] = new Array();
+    delta["newNodes"] = new Array();
+    delta["removedErrors"] = new Array();
+    delta["removedWarnings"] = new Array();
+    delta["removedNodes"] = new Array(); 
+
+    //check for added/removed nodes
+    for( var currNode in currSnapshot["idMap"] )
+	if( prevSnapshot["idMap"][ currNode ] == null )
+	    delta["newNodes"].push( currNode );
+    for( var prevNode in prevSnapshot["idMap"] )
+	if( currSnapshot["idMap"][ prevNode ] == null )
+	    delta["removedNodes"].push( prevNode );	    	
+
+    //check for added/removed errors and warnings
+    for( var currError in currSnapshot["errors"] )
+	if( prevSnapshot["errors"][ currError ] == null
+	    || prevSnapshot["errors"][ currError ] != currSnapshot["errors"][ currError ] )
+	    delta["newErrors"].push( currError + ":" + currSnapshot["errors"][ currError ]);
+    for( var prevError in prevSnapshot["errors"] )
+	if( currSnapshot["errors"][ prevError ] == null
+	    || currSnapshot["errors"][ prevError ] != prevSnapshot["errors"][ prevError ] )
+	    delta["removedErrors"].push( prevError + ":" + prevSnapshot["errors"][ prevError ]); 
+    for( var currWarning in currSnapshot["warnings"] )
+	if( prevSnapshot["warnings"][ currWarning ] == null
+	    || prevSnapshot["warnings"][ currWarning ] != currSnapshot["warnings"][ currWarning ] )
+	    delta["newWarnings"].push( currWarning + ":" + currSnapshot["warnings"][ currWarning ]);
+    for( var prevWarning in prevSnapshot["warnings"] )
+	if( currSnapshot["warnings"][ prevWarning ] == null
+	    || currSnapshot["warnings"][ prevWarning ] != prevSnapshot["warnings"][ prevWarning ] )
+	    delta["removedWarnings"].push( prevWarning + ":" + prevSnapshot["warnings"][ prevWarning ]); 
+    
+    printjson(delta);
+
+}
 
 
 
