@@ -171,7 +171,7 @@ namespace mongo {
 		BSONObjBuilder currServer;
 		HostAndPort hp = it->String();
 		DBClientConnection dbc;
-		
+	
 		int numSocketExceptions = 0;
 		const int retryMax = 3;
 		for (int retryCount = 1; retryCount <= retryMax; ++retryCount) {
@@ -184,12 +184,11 @@ namespace mongo {
 			    currServer.append("isConnected" , true );
 			    if(connInfo != "")
 				currServer.append("connInfo" , connInfo);	
+			    
 			    //time a ping	
 			    using namespace boost::posix_time;
 			    ptime time_start(microsec_clock::local_time());	
-			    
 			    dbc.runCommand(db, outCommand, pingInfo);
-			    
 			    ptime time_end(microsec_clock::local_time());
 			    time_duration duration(time_end - time_start);
 			    std::stringstream strstream;
@@ -197,13 +196,18 @@ namespace mongo {
 			    currServer.append("pingTimeMicrosecs", strstream.str()); 
 			    if(pingInfo.toString().size() > 11) //if more than { "ok" : 1 }
 				currServer.append("pingInfo", pingInfo);
+		
+			    //count the number of socket exceptions since the last ping 
+			 //   int numPastSocketExceptions = SocketException::getNumThrown();
+			 //   currServer.append("numPastSocketExceptions" , numPastSocketExceptions);
+
 			    //other connection diagnostics here eventually
-			    break;	
+			    break; //no socket exception, so do not retry	
 			}
 			else{
 			    currServer.append("isConnected" , false );
 			    currServer.append("connInfo", connInfo);
-			    break;	
+			    break; //no socket exception, so do not retry	
 			}
 		    }
 		    catch (const SocketException&) {

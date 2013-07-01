@@ -20,6 +20,9 @@
 #include "mongo/pch.h"
 
 #include <stdio.h>
+#include <time.h>
+#include "mongo/bson/bsonobjbuilder.h"
+#include <map>
 
 #ifndef _WIN32
 
@@ -40,6 +43,11 @@
 #endif
 
 #include "mongo/platform/compiler.h"
+
+#include <boost/thread/mutex.hpp>
+#include <boost/thread/thread.hpp>
+//const boost::mutex _mutex;
+
 
 namespace mongo {
 
@@ -137,20 +145,36 @@ namespace mongo {
     class SocketException : public DBException {
     public:
         const enum Type { CLOSED , RECV_ERROR , SEND_ERROR, RECV_TIMEOUT, SEND_TIMEOUT, FAILED_STATE, CONNECT_ERROR } _type;
-        
+
+	
         SocketException( Type t , const std::string& server , int code = 9001 , const std::string& extra="" ) 
             : DBException( (string)"socket exception ["  + _getStringType( t ) + "] for " + server, code ),
               _type(t),
               _server(server),
               _extra(extra)
-        {}
+	{
+		//use timestamp instead?
+/*		std::time_t time = std::time(NULL);
+		recordException( t , server , time );*/
+	//	boost::mutex::scoped_lock lk( _mutex );
+		numThrown++; 
+	}
 
-        virtual ~SocketException() throw() {}
+
+	virtual ~SocketException() throw() {}
 
         bool shouldPrint() const { return _type != CLOSED; }
         virtual string toString() const;
         virtual const std::string* server() const { return &_server; }
-    private:
+
+	static long long getNumThrown();
+	static long long getNumExceptions( std::string server );	
+ 
+  private:
+
+	// store the number of SocketExceptions thrown by this server
+	static long long numThrown;
+	static std::map< std::string, long long> exceptionHistory;
 
         // TODO: Allow exceptions better control over their messages
         static string _getStringType( Type t ){

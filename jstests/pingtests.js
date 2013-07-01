@@ -142,7 +142,9 @@ function pingCluster( host , verbosity ) {
     buildGraph( nodes , edges );   
     buildIdMap( nodes , idMap );
     var diagnosis = diagnose( nodes , edges );
-    
+
+    printjson(edges);  
+ 
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
     saveSnapshot( currTime , nodes , edges , idMap , diagnosis["errors"] , diagnosis["warnings"]);
@@ -327,6 +329,19 @@ function diagnose( nodes , edges ){
     }
     //check replica sets
 
+    //check if config server is also a shard server
+   
+    var configSvrs = new Array(); 
+    for(var curr in nodes){
+	if( nodes[curr]["role"] == "config" )
+	    configSvrs.push( nodes[curr]["hostName"] );
+    }
+
+
+/*
+    for(var curr in nodes){
+	if( nodes[curr]["role"] 
+*/
     diagnosis["errors"] = errors;
     diagnosis["warnings"] = warnings;
     
@@ -394,9 +409,11 @@ function buildGraph( nodes , edges ){
 			newEdge["isConnected"] = true;
 			newEdge["pingTimeMicrosecs"] = 
 			    pingInfo[ nodes[tgtNode]["hostName"] ]["pingTimeMicrosecs"]; 
+			newEdge["totalSocketExceptions"] =
+			    pingInfo[ nodes[tgtNode]["hostName"] ]["numPastSocketExceptions"];	
 			//more ping info can be added here later 
 		    }
-		    newEdge["numSocketExceptions"] = 
+		    newEdge["connectionSocketExceptions"] = 
 			pingInfo[ nodes[tgtNode]["hostName"] ]["numSocketExceptions"]; 
 		    edges[ srcNode ][ tgtNode ] = newEdge;	    
 		}
@@ -506,8 +523,6 @@ function buildIdMap( nodes , idMap ){
 }
 
 function showAllNodes( verbosity ){ 
-/*    if( verbosity == "v")
-	printjson(*/
     printjson( history["allNodes"] ); 
 }
 
@@ -524,9 +539,8 @@ function saveSnapshot( time , nodes , edges , idMap , errors , warnings){
 	if( history["allNodes"][ curr ] == null){
 	    history["allNodes"][ curr ] = {};
 	    history["allNodes"][ curr ]["status"] = "alive"; 
-	    history["allNodes"][ curr ]["previousRoles"] = {};
-	    history["allNodes"][ curr ]["currentRole"] = {};
-	    history["allNodes"][ curr ]["currentRole"]["role"] = nodes[ idMap[curr] ]["role"];
+	    history["allNodes"][ curr ]["previousRoles"] = new Array();
+	    history["allNodes"][ curr ]["currentRole"] = nodes [ idMap[curr] ]["role"];
 	}
     //mark any nodes that previously existed but no longer exist as dead
     for ( var curr in history["allNodes"] )
@@ -551,7 +565,7 @@ function calculateStats(){
 		    "numPingAttempts" : 0,
 		    "numSuccessful" : 0,
 		    "numFailed" : 0,	
-		    "numSocketExceptions" : 0,
+		    "totalSocketExceptions" : 0,
 		    "percentageIsConnected" :0,
 		    "maxPingTimeMicrosecs" : null,
 		    "minPingTimeMicrosecs" : null,
@@ -573,9 +587,9 @@ function calculateStats(){
 		    var tgt = history["snapshots"][moment]["idMap"][ tgtName ];
 		    if( currEdges[ src ][ tgt ] != null ){ //if edge existed in this snapshot
 			edgeStats[ srcName ][ tgtName ]["numPingAttempts"]++;
-			edgeStats[ srcName ][ tgtName ]["numSocketExceptions"] 
-			    = parseInt(edgeStats[ srcName ][ tgtName ]["numSocketExceptions"])
-			    + parseInt(currEdges[ src ][ tgt ]["numSocketExceptions"]);
+			edgeStats[ srcName ][ tgtName ]["totalSocketExceptions"] 
+			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalSocketExceptions"])
+			    + parseInt(currEdges[ src ][ tgt ]["totalSocketExceptions"]);
 			if( currEdges[ src ][ tgt ]["isConnected"] == true){
 			    edgeStats[ srcName ][ tgtName ]["numSuccessful"]++;
 			    var pingTime = currEdges[ src ][ tgt ]["pingTimeMicrosecs"];
@@ -776,7 +790,8 @@ function calculateDeltasBetween( time1 , time2 ){
 }
 
 function clearHistory(){
-
+    history["snapshots"] = {};
+    history["allNodes"] = {};
 }
 
 

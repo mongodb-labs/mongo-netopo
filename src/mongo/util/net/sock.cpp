@@ -389,6 +389,17 @@ namespace mongo {
         return ss.str();
     }
 
+    std::map< std::string , long long > SocketException::exceptionHistory;
+    long long SocketException::numThrown = 0;
+
+    long long SocketException::getNumThrown(){
+   	return numThrown;
+     }
+
+    long long SocketException::getNumExceptions( std::string server ){
+	long long temp = 0;
+	return temp;	
+    }
     // ------------ Socket -----------------
     
     Socket::Socket(int fd , const SockAddr& remote) : 
