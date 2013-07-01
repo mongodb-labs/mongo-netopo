@@ -134,20 +134,22 @@ function pingCluster( host , verbosity ) {
     var edges = {};
     var idMap = {};
     var index = 0; 
+    var errors = {};
+    var warnings = {};
 
     index = getShardServers( configDB , nodes , index , idMap);
     index = getMongosServers( configDB , nodes , index , idMap);
     index = getConfigServers( adminDB , nodes , index , idMap);
   
-    buildGraph( nodes , edges );   
+    buildGraph( nodes , edges , errors , warnings );   
     buildIdMap( nodes , idMap );
-    var diagnosis = diagnose( nodes , edges );
+    var diagnosis = diagnose( nodes , edges , errors , warnings );
 
     printjson(edges);  
  
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
-    saveSnapshot( currTime , nodes , edges , idMap , diagnosis["errors"] , diagnosis["warnings"]);
+    saveSnapshot( currTime , nodes , edges , idMap , errors , warnings );
 
 //    var userView = buildUserView( diagnosis , verbosity ); 
 //    printjson( userView );
@@ -311,10 +313,8 @@ function isRecConn( src , tgt , nodes ){
     return recConnChart[ nodes[src]["role"] ][ nodes[tgt]["role"] ];
 }
 
-function diagnose( nodes , edges ){
+function diagnose( nodes , edges , errors , warnings){
     var diagnosis = {};
-    var errors = {};
-    var warnings = {};
     
     //check edges
     for( var src in edges ){
@@ -390,7 +390,7 @@ function pingShardedReplSet( host ) {
 //for a few reasons:
     // 1) forwarding in the ping function has not been implemented yet
     // 2) 
-function buildGraph( nodes , edges ){
+function buildGraph( nodes , edges , errors , warnings ){
     for( var srcNode in nodes){
 	edges[ srcNode ] = {}; 
 	for( var tgtNode in nodes ) {	
@@ -420,8 +420,9 @@ function buildGraph( nodes , edges ){
 		catch(e){
 	//	    edges[ srcNode[id] ][ tgtNode[id] ] = 
 	//		ERR["CLIENT_CONN_ERR"] + tgtNode["hostName"];
-		   edges[ srcNode ][ tgtNode ] = e;
-		} 
+	//  	   edges[ srcNode ][ tgtNode ] = e;
+		    errors[ nodes[srcNode]["key"] + "->" + nodes[tgtNode]["key"] ] = e;	
+	    	} 
 	    }
 	}
     }
