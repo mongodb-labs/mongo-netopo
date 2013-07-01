@@ -207,7 +207,11 @@ namespace mongo {
 			else{
 			    currServer.append("isConnected" , false );
 			    currServer.append("connInfo", connInfo);
-			    break; //no socket exception, so do not retry	
+		
+			    //count the number of socket exceptions since the last ping 
+			    int numPastSocketExceptions = SocketException::getNumExceptions( hp );
+			    currServer.append("numPastSocketExceptions" , numPastSocketExceptions);
+			    break; //no socket exception, so do not retry
 			}
 		    }
 		    catch (const SocketException&) {

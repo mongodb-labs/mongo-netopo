@@ -157,7 +157,7 @@ namespace mongo {
 	  /*  std::time_t time = std::time(NULL);
 	    recordException( t , server , time ); */
 
-//	    boost::mutex::scoped_lock lk( _mutex ); 
+	    //boost::mutex::scoped_lock lk( _mutex ); 
 	    
 	    exceptionHistory[ server ]++;
 	}

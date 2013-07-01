@@ -409,10 +409,10 @@ function buildGraph( nodes , edges ){
 			newEdge["isConnected"] = true;
 			newEdge["pingTimeMicrosecs"] = 
 			    pingInfo[ nodes[tgtNode]["hostName"] ]["pingTimeMicrosecs"]; 
-			newEdge["totalSocketExceptions"] =
-			    pingInfo[ nodes[tgtNode]["hostName"] ]["numPastSocketExceptions"];	
-			//more ping info can be added here later 
+		//more ping info can be added here later 
 		    }
+		    newEdge["totalSocketExceptions"] =
+			    pingInfo[ nodes[tgtNode]["hostName"] ]["numPastSocketExceptions"];	
 		    newEdge["connectionSocketExceptions"] = 
 			pingInfo[ nodes[tgtNode]["hostName"] ]["numSocketExceptions"]; 
 		    edges[ srcNode ][ tgtNode ] = newEdge;	    
@@ -595,10 +595,10 @@ function calculateStats(){
 			    var pingTime = currEdges[ src ][ tgt ]["pingTimeMicrosecs"];
 			    if( edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"] == null 
 				|| pingTime > edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"])
-				edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"] = pingTime;	
+				edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"] = parseInt(pingTime);	
 			    if( edgeStats[ srcName ][ tgtName ]["minPingTimeMicrosecs"] == null 
 				|| pingTime < edgeStats[ srcName ][ tgtName ]["minPingTimeMicrosecs"])
-				edgeStats[ srcName ][ tgtName ]["minPingTimeMicrosecs"] = pingTime;	
+				edgeStats[ srcName ][ tgtName ]["minPingTimeMicrosecs"] = parseInt(pingTime);	
 			    edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]  
 				= parseInt(edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]) 
 				+ parseInt(pingTime);	
@@ -633,7 +633,7 @@ function calculateStats(){
 		if( srcName != tgtName && edgeStats[ srcName ][ tgtName ]["numSuccessful"] > 0){	
 		    var src = history["snapshots"][moment]["idMap"][ srcName ];	
 		    var tgt = history["snapshots"][moment]["idMap"][ tgtName ];
-		    if( currEdges[ src ][ tgt ] != null ){ 
+		    if( currEdges[ src ][ tgt ] != null && currEdges[ src ][ tgt ]["isConnected"] != false){ 
 			edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"] 
 			    = parseFloat( edgeStats[ srcName ][ tgtName ]["subtractMeanSquaredSum"])
 			    + (parseFloat( currEdges[ src ][ tgt ]["pingTimeMicrosecs"] ) 
