@@ -198,8 +198,8 @@ namespace mongo {
 				currServer.append("pingInfo", pingInfo);
 		
 			    //count the number of socket exceptions since the last ping 
-			 //   int numPastSocketExceptions = SocketException::getNumThrown();
-			 //   currServer.append("numPastSocketExceptions" , numPastSocketExceptions);
+			    int numPastSocketExceptions = SocketException::getNumThrown();
+			    currServer.append("numPastSocketExceptions" , numPastSocketExceptions);
 
 			    //other connection diagnostics here eventually
 			    break; //no socket exception, so do not retry	
