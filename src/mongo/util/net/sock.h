@@ -153,11 +153,13 @@ namespace mongo {
               _server(server),
               _extra(extra)
 	{
-		//use timestamp instead?
-/*		std::time_t time = std::time(NULL);
-		recordException( t , server , time );*/
-	//	boost::mutex::scoped_lock lk( _mutex );
-		numThrown++; 
+	    //use timestamp instead?
+	  /*  std::time_t time = std::time(NULL);
+	    recordException( t , server , time ); */
+
+//	    boost::mutex::scoped_lock lk( _mutex ); 
+	    
+	    exceptionHistory[ server ]++;
 	}
 
 
@@ -167,13 +169,12 @@ namespace mongo {
         virtual string toString() const;
         virtual const std::string* server() const { return &_server; }
 
-	static long long getNumThrown();
-	static long long getNumExceptions( std::string server );	
+	// return the number of socket exceptions this server has seen to a particular remote host
+	static long long getNumExceptions( std::string remoteHost );	
  
   private:
 
 	// store the number of SocketExceptions thrown by this server
-	static long long numThrown;
 	static std::map< std::string, long long> exceptionHistory;
 
         // TODO: Allow exceptions better control over their messages
