@@ -224,6 +224,8 @@ namespace mongo {
 		currServer.append("incomingSocketExceptions" , SocketException::numIncomingExceptions( hp ));
 		currServer.append("outgoingSocketExceptions" , SocketException::numOutgoingExceptions( hp ));
 
+		currServer.append("fortesting" , SocketException::forTesting() );
+
 		//count the number of socket exceptions seen to this host while trying to ping it 
 		currServer.append("clientSocketExceptions" , numSocketExceptions);
 		

@@ -403,6 +403,10 @@ namespace mongo {
 	return outgoingExceptions[ remoteHost ];
     }
 
+    string SocketException::forTesting( ){
+	return "prettyHostName() : " + prettyHostName() + ", getHostName() : " + getHostName();
+    }
+
     // ------------ Socket -----------------
 
     std::map< string , long long > Socket::dataSentHistory;

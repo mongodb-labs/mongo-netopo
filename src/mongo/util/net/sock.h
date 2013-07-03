@@ -144,7 +144,6 @@ namespace mongo {
     public:
         const enum Type { CLOSED , RECV_ERROR , SEND_ERROR, RECV_TIMEOUT, SEND_TIMEOUT, FAILED_STATE, CONNECT_ERROR } _type;
 
-	
         SocketException( Type t , const std::string& server , int code = 9001 , const std::string& extra="" ) 
             : DBException( (string)"socket exception ["  + _getStringType( t ) + "] for " + server, code ),
               _type(t),
@@ -173,6 +172,8 @@ namespace mongo {
 	// return the number of socket exceptions this server has seen to a particular remote host
 	static long long numIncomingExceptions( std::string remoteHost );	
 	static long long numOutgoingExceptions( std::string remoteHost ); 
+	
+	static string forTesting();
   
     private:
 	

@@ -109,30 +109,23 @@ function createShardedCluster() {
 // Takes in a connection of the form "host:port" and returns a complete graph of the connections
 // associated with this node
 function pingCluster( host , verbosity ) {
-
-    print("running...");
-
-    try{
-	var conn = new Mongo( host );
-    }
+    try{ var conn = new Mongo( host );}
     catch(e){
-	printjson(e);
+	print("Unable to connect to input host.");
 	return;
     } 
-    try{
-     	var configDB = conn.getDB(config); //what exactly is this "config"?
-    }
+    try{var configDB = conn.getDB(config); }
     catch(e){
-	printjson(e);
+	print("Unable to connect to config database from input host.");
 	return;
     }
-    try{
-	var adminDB = conn.getDB("admin");
-    }
+    try{var adminDB = conn.getDB("admin");}
     catch(e){
-	printjson(e);
+	print("Unable to connect to admin database on input host.");
 	return;
     }
+
+    print("running...");
 
     var nodes = {};   
     var edges = {};
@@ -144,12 +137,11 @@ function pingCluster( host , verbosity ) {
     index = getShardServers( configDB , nodes , index , errors , warnings);
     index = getMongosServers( configDB , nodes , index , errors , warnings);
     index = getConfigServers( adminDB , nodes , index , errors , warnings);
- 
     buildGraph( nodes , edges , errors , warnings );   
     buildIdMap( nodes , idMap );
     var diagnosis = diagnose( nodes , edges , errors , warnings );
 
-   // printjson(edges);
+//    printjson(nodes);
 
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
@@ -176,12 +168,13 @@ function buildUserView( diagnosis , verbosity ){
 }
  
 var ERR = {
-    "SHARD_IS_STANDALONE_MONGOD" : "Shard is standalone mongod instance, not replica set primary",
+    "CONFIG_DOWN" : "A config server is down",
+    "SHARD_IS_STANDALONE_MONGOD" : "This shard is a standalone mongod instance, not replica set primary",
     "MISSING_REQ_CONN" : "Missing required connection to ",
     "MISSING_REC_CONN" : "Missing recommended connection to ",
     "CLIENT_CONNECTION_ERROR" : "Unable to make client connection",
     "NO_REPL_SET_NAME_NOTED" : "No replica set name noted",
-    "CONFIG_SERVER_IS_ALSO_SHARD_SERVER" : "This config server is also a shard server",
+    "CONFIG_SERVER_IS_ALSO_SHARD_SERVER" : "This mongod instance is a config server as well as shard server",
     "REPORTS_DIF_REPLSET_NAME" : "Reports different replset name from primary",
     "REPL_SET_NO_MASTER" : "No master found for replica set",
     "REPL_SET_NOT_CONN" : "Replica set not fully connected",
@@ -264,7 +257,7 @@ function diagnose( nodes , edges , errors , warnings){
     }
     for(var curr in nodes){
 	for(var i=0; i< configSvrs.length; i++){
-	    if( curr == configSvrs[i] && nodes[curr]["role"] != "config")
+	    if( nodes[curr]["key"] == nodes[configSvrs[i]]["key"] && nodes[curr]["role"] != "config")
 		addWarning( nodes[curr]["key"] , ERR["CONFIG_SERVER_IS_ALSO_SHARD_SERVER"] , warnings );
 	}
     }	
@@ -356,6 +349,7 @@ function buildGraph( nodes , edges , errors , warnings ){
 			pingInfo[ nodes[tgtNode]["hostName"] ]["outgoingSocketExceptions"]; 
 		    newEdge["clientSocketExceptions"] = 
 			pingInfo[ nodes[tgtNode]["hostName"] ]["clientSocketExceptions"]; 
+		    newEdge["fortesting"] = pingInfo[ nodes[tgtNode]["hostName"] ]["fortesting"]; 
 		    edges[ srcNode ][ tgtNode ] = newEdge;	    
 		}
 		catch(e){
@@ -368,6 +362,7 @@ function buildGraph( nodes , edges , errors , warnings ){
 }
 
 function getConfigServers( adminDB , nodes , index , errors , warnings ){
+    try{
     configSvr = adminDB.runCommand( { getCmdLineOpts : 1 });
     if(configSvr != null && configSvr != ""){
 	var id = index;
@@ -385,10 +380,14 @@ function getConfigServers( adminDB , nodes , index , errors , warnings ){
     }
     else
 	addWarning( "cluster" , ERR["NO_CONFIG_SERVER_NOTED"] , warnings );
+    } catch(e) {
+	addError( "cluster" , ERR["CONFIG_DOWN"] , errors );
+    }
     return index;
 }
 
 function getMongosServers( config , nodes , index , errors , warnings ){
+    try{
     config.mongos.find().forEach( function(doc) {
 	var id = index;
 	index++;
@@ -403,10 +402,14 @@ function getMongosServers( config , nodes , index , errors , warnings ){
 			    + "_" + nodes[id]["machine"] 
 			    + "_" + nodes[id]["process"];
     });
+    } catch(e) {
+	addError( "cluster" , ERR["CONFIG_DOWN"] , errors );
+    }
     return index;
 }
 
 function getShardServers( configDB , nodes , index , errors , warnings ){
+	try{
         configDB.shards.find().forEach( function(doc) {
 	// if the shard is a replica set 
 	// do string parsing for shard servers
@@ -447,7 +450,6 @@ function getShardServers( configDB , nodes , index , errors , warnings ){
     		}  
 	    }	
 	 }
-        
 	//if the shard has a standalone mongod instance 
 	else{
 	    var id = index;
@@ -465,6 +467,9 @@ function getShardServers( configDB , nodes , index , errors , warnings ){
 	    addWarning( nodes[id]["key"] , ERR["SHARD_IS_STANDALONE_MONGOD"] , warnings );
 	}
     });
+    } catch (e) {
+	addError( "cluster" , ERR["CONFIG_DOWN"] , errors );
+    }
     return index;	
 }
 
@@ -532,8 +537,8 @@ function calculateStats(){
 		    "percentageIsConnected" : 0,
 		    "avgIncomingSocketExceptions" : 0,
 		    "avgOutgoingSocketExceptions" : 0,
-		    "totalIncomingSocketExceptions" : 0,
-		    "totalOutgoingSocketExceptions" : 0,
+//		    "totalIncomingSocketExceptions" : 0,
+//		    "totalOutgoingSocketExceptions" : 0,
 		    "avgBytesSent" : 0,
 		    "avgBytesReceived" : 0,
 		    "totalBytesSent" : 0,
@@ -564,14 +569,18 @@ function calculateStats(){
 		    if( currEdges[ src ][ tgt ] != null ){
 			edgeStats[ srcName ][ tgtName ]["numPingAttempts"]++;
 
-			edgeStats[ srcName ][ tgtName ]["totalIncomingSocketExceptions"] 
+// right now, each ping returns the total number of
+// incoming/outgoing socket exceptions already
+// when/if later that changes to showing only the 
+// number since the last ping, then this can be re-added
+/*			edgeStats[ srcName ][ tgtName ]["totalIncomingSocketExceptions"] 
 			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalIncomingSocketExceptions"])
 			    + parseInt("" + currEdges[ src ][ tgt ]["incomingSocketExceptions"]);
 
 			edgeStats[ srcName ][ tgtName ]["totalOutgoingSocketExceptions"] 
 			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalOutgoingSocketExceptions"])
 			    + parseInt("" + currEdges[ src ][ tgt ]["outgoingSocketExceptions"]);
-
+*/
 
 			edgeStats[ srcName ][ tgtName ]["totalBytesSent"] 
 			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalBytesSent"])
