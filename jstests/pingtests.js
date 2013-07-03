@@ -147,6 +147,8 @@ function pingCluster( host , verbosity ) {
     buildIdMap( nodes , idMap );
     var diagnosis = diagnose( nodes , edges , errors , warnings );
 
+    printjson(edges);
+
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
     saveSnapshot( currTime , nodes , edges , idMap , errors , warnings );
@@ -170,7 +172,7 @@ function buildUserView( diagnosis , verbosity ){
 var ERR = {
     "MISSING_REQ_CONNECTION" : "Missing required connection",
     "MISSING_REC_CONNECTION" : "Missing recommended connection",
-    "CLIENT_CONN_ERROR" : "Client unable to make connection to ",
+    "CLIENT_CONNECTION_ERROR" : "Unable to make client connection",
     "NO_REPL_SET_NAME_NOTED" : "No replica set name noted",
     "CONFIG_SERVER_IS_ALSO_SHARD_SERVER" : "This config server is also a shard server"
 }
@@ -217,14 +219,17 @@ function diagnose( nodes , edges , errors , warnings){
 
     //check if config server is also a shard server
     var configSvrs = new Array(); 
-    for(var curr in nodes)
+    for(var curr in nodes){
 	if( nodes[curr]["role"] == "config" )
 	    configSvrs.push( curr );
-    for(var curr in nodes)
-	for(var configsvr in configSvrs)
-	    if( curr == configsvr && nodes[curr]["role"] != "config")
-		warnings[ nodes[src]["key"] ] = "CONFIG_SERVER_IS_ALSO_SHARD_SERVER";
-	
+    }
+    for(var curr in nodes){
+	for(var svr in configSvrs){
+	    if( curr == svr && nodes[curr]["role"] != "config")
+		warnings[ nodes[curr]["key"] ] = "CONFIG_SERVER_IS_ALSO_SHARD_SERVER" + " role: " + nodes[curr]["role"];
+	}
+    }	
+    
     diagnosis["errors"] = errors;
     diagnosis["warnings"] = warnings;
     
@@ -232,6 +237,7 @@ function diagnose( nodes , edges , errors , warnings){
 
 }
 
+/* currently unused
 function pingShardedReplSet( host ) {
 
     var conn = new Mongo( host );
@@ -267,6 +273,7 @@ function pingShardedReplSet( host ) {
      }
     return connStatus;
 }
+*/
 
 //Although the {ping} function takes an array of hosts to ping, this function
 //pings each node one at a time (passes an array of one element to {ping})
@@ -281,9 +288,12 @@ function buildGraph( nodes , edges , errors , warnings ){
 		var newEdge = {};
 		try{	
 		    var conn = new Mongo( nodes[srcNode]["hostName"] );
-		    var admin = conn.getDB("admin");
+		    var admin = conn.getDB("admin"); 
 		    var pingInfo = 
 			admin.runCommand( { "ping" : 1, hosts : [nodes[tgtNode]["hostName"]] } );
+
+		    printjson(pingInfo);
+
 		    if( pingInfo[ nodes[tgtNode]["hostName"] ][ "isConnected" ] == false){
 			newEdge["isConnected"] = false;
 			newEdge["errmsg"] = pingInfo[ nodes[tgtNode]["hostName"] ][ "errmsg" ];	
@@ -292,8 +302,10 @@ function buildGraph( nodes , edges , errors , warnings ){
 			newEdge["isConnected"] = true;
 			newEdge["pingTimeMicrosecs"] = 
 			    pingInfo[ nodes[tgtNode]["hostName"] ]["pingTimeMicrosecs"]; 
-		//more ping info can be added here later 
+			//more ping info can be added here later 
 		    }
+		    newEdge["bytesSent"] = pingInfo[ nodes[tgtNode]["hostName"] ]["bytesSent"];
+		    newEdge["bytesReceived"] = pingInfo[ nodes[tgtNode]["hostName"] ]["bytesReceived"]; 
 		    newEdge["totalSocketExceptions"] =
 			    pingInfo[ nodes[tgtNode]["hostName"] ]["numPastSocketExceptions"];	
 		    newEdge["connectionSocketExceptions"] = 
@@ -301,10 +313,8 @@ function buildGraph( nodes , edges , errors , warnings ){
 		    edges[ srcNode ][ tgtNode ] = newEdge;	    
 		}
 		catch(e){
-	//	    edges[ srcNode[id] ][ tgtNode[id] ] = 
-	//		ERR["CLIENT_CONN_ERR"] + tgtNode["hostName"];
-	//  	   edges[ srcNode ][ tgtNode ] = e;
-		    errors[ nodes[srcNode]["key"] ] = e;	
+	//	    edges[ srcNode ][ tgtNode ] = e;
+		    errors[ nodes[srcNode]["key"] ] = ERR["CLIENT_CONNECTION_ERROR"];	
 	    	} 
 	    }
 	}
@@ -312,26 +322,23 @@ function buildGraph( nodes , edges , errors , warnings ){
 }
 
 function getConfigServers( adminDB , nodes , index , errors , warnings ){
-    try{
-	configSvr = adminDB.runCommand( { getCmdLineOpts : 1 });
-	if(configSvr != null && configSvr != ""){
-	    var id = index;
-	    index++;
-	    nodes[id] = {};
-	    nodes[id]["hostName"] = configSvr["parsed"]["configdb"];
-	    nodes[id]["machine"] = ""; //to be expanded later
-	    nodes[id]["process"] = "mongod";	
-	    nodes[id]["errors"] = new Array();
-	    nodes[id]["warnings"] = new Array();
-	    nodes[id]["role"] = "config";
-	    nodes[id]["key"] = nodes[id]["hostName"] 
-				+ "_" + nodes[id]["machine"] 
-				+ "_" + nodes[id]["process"];
-	}
+    configSvr = adminDB.runCommand( { getCmdLineOpts : 1 });
+    if(configSvr != null && configSvr != ""){
+	var id = index;
+	index++;
+	nodes[id] = {};
+	nodes[id]["hostName"] = configSvr["parsed"]["configdb"];
+	nodes[id]["machine"] = ""; //to be expanded later
+	nodes[id]["process"] = "mongod";	
+	nodes[id]["errors"] = new Array();
+	nodes[id]["warnings"] = new Array();
+	nodes[id]["role"] = "config";
+	nodes[id]["key"] = nodes[id]["hostName"] 
+	    + "_" + nodes[id]["machine"] 
+	    + "_" + nodes[id]["process"];
     }
-    catch{
-//	errors[ "
-    }
+    else{
+	warnings["NO_CONFIG_SERVER_NOTED"]}
     return index;
 }
 

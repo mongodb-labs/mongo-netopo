@@ -46,8 +46,6 @@
 
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/thread.hpp>
-//const boost::mutex _mutex;
-
 
 namespace mongo {
 
@@ -153,12 +151,15 @@ namespace mongo {
               _server(server),
               _extra(extra)
 	{
+	    // TODO: include time of exception 
 	    //use timestamp instead?
-	  /*  std::time_t time = std::time(NULL);
-	    recordException( t , server , time ); */
+	    //std::time_t time = std::time(NULL);
+	    //recordException( t , server , time ); 
 
+	    // TODO: add locking
 	    //boost::mutex::scoped_lock lk( _mutex ); 
-	    
+	   
+	    // TODO: differentiate between incoming and outgoing exceptions 
 	    exceptionHistory[ server ]++;
 	}
 
@@ -263,8 +264,22 @@ namespace mongo {
             return _fdCreationMicroSec;
         }
 
+	// return the amount of data this server has sent to a particular host
+	static long long getBytesSent( string remoteHost );
+	// return the amount of data this server has received from a particular host	
+	static long long getBytesReceived( string remoteHost );	
+
+	static string getHostsSentTo( string remoteHost );
+	static string getHostsReceivedFrom( string remoteHost );
+
     private:
-        void _init();
+
+	static std::map< string, long long> dataSentHistory;
+	static std::map< string, long long> dataRecvHistory;
+
+	static boost::mutex _mutex;
+	
+	void _init();
 
         /** sends dumbly, just each buffer at a time */
         void _send( const vector< pair< char *, int > > &data, const char *context );

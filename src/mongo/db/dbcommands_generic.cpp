@@ -194,24 +194,19 @@ namespace mongo {
 			    std::stringstream strstream;
 			    strstream << duration.total_microseconds();
 			    currServer.append("pingTimeMicrosecs", strstream.str()); 
-			    if(pingInfo.toString().size() > 11) //if more than { "ok" : 1 }
+			   
+			    //append message returned from the shallow ping  if more than { "ok : 1 } 
+			    if(pingInfo.toString().size() > 11) 
 				currServer.append("pingInfo", pingInfo);
 		
-			    //count the number of socket exceptions since the last ping 
-			    int numPastSocketExceptions = SocketException::getNumExceptions( hp );
-			    currServer.append("numPastSocketExceptions" , numPastSocketExceptions);
-
-			    //other connection diagnostics here eventually
+			    //TODO: other connection diagnostics here eventually
+		
 			    break; //no socket exception, so do not retry	
 			}
 			else{
 			    currServer.append("isConnected" , false );
 			    currServer.append("connInfo", connInfo);
-		
-			    //count the number of socket exceptions since the last ping 
-			    int numPastSocketExceptions = SocketException::getNumExceptions( hp );
-			    currServer.append("numPastSocketExceptions" , numPastSocketExceptions);
-			    break; //no socket exception, so do not retry
+				    break; //no socket exception, so do not retry
 			}
 		    }
 		    catch (const SocketException&) {
@@ -219,7 +214,23 @@ namespace mongo {
 			continue; // try again
 		    }   
 		}
+
+		//note the amount of data received from this host
+		currServer.append("bytesReceived" , Socket::getBytesReceived( hp ));	
+		//note the amount of data sent to this host
+		currServer.append("bytesSent" , Socket::getBytesSent( hp ));	   
+/*
+		//note hosts received from
+		currServer.append("receivedFrom" , Socket::getHostsReceivedFrom( hp ));
+		currServer.append("sentTo" , Socket::getHostsSentTo( hp ));
+*/		
+		//count the number of socket exceptions seen to or from this host 
+		int numPastSocketExceptions = SocketException::getNumExceptions( hp );
+		currServer.append("numPastSocketExceptions" , numPastSocketExceptions);
+
+		//count the number of socket exceptions seen to this host while trying to ping it 
 		currServer.append("numSocketExceptions" , numSocketExceptions);
+		
 		result.append(it->String(), currServer.obj());
 	    }
 	    return true;
