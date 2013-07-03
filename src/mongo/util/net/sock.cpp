@@ -390,14 +390,17 @@ namespace mongo {
         
         return ss.str();
     }
+    
+    boost::mutex SocketException::_mutex;
 
-    std::map< std::string , long long > SocketException::exceptionHistory;
+    std::map< string , long long > SocketException::incomingExceptions;
+    std::map< string , long long > SocketException::outgoingExceptions;
 
-    long long SocketException::getNumExceptions( std::string remoteHost ){
-	if( exceptionHistory[ remoteHost ] > 0)	
-	    return exceptionHistory[ remoteHost ];
-	else
-	    return 0;	
+    long long SocketException::numIncomingExceptions( std::string remoteHost ){
+	return incomingExceptions[ remoteHost ];
+    }
+    long long SocketException::numOutgoingExceptions( std::string remoteHost ){
+	return outgoingExceptions[ remoteHost ];
     }
 
     // ------------ Socket -----------------

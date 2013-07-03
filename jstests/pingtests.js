@@ -99,9 +99,9 @@ function createShardedCluster() {
 
     // ShardingTest = function( testName, numShards, verboseLevel, numMongos, otherParams )
     // testName is the cluster name	
-    //s = new ShardingTest( "shard1" , 3 , 0 , 3 );
+    s = new ShardingTest( "shard1" , 3 , 0 , 3 );
 //    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , shards:6 , config:3 } );
-    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
+//    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
    return s;			
 
 }
@@ -109,6 +109,8 @@ function createShardedCluster() {
 // Takes in a connection of the form "host:port" and returns a complete graph of the connections
 // associated with this node
 function pingCluster( host , verbosity ) {
+
+    print("running...");
 
     try{
 	var conn = new Mongo( host );
@@ -139,15 +141,15 @@ function pingCluster( host , verbosity ) {
     var errors = {};
     var warnings = {};
 
-    index = getShardServers( configDB , nodes , index , idMap);
-    index = getMongosServers( configDB , nodes , index , idMap);
-    index = getConfigServers( adminDB , nodes , index , idMap);
+    index = getShardServers( configDB , nodes , index , errors , warnings);
+    index = getMongosServers( configDB , nodes , index , errors , warnings);
+    index = getConfigServers( adminDB , nodes , index , errors , warnings);
  
     buildGraph( nodes , edges , errors , warnings );   
     buildIdMap( nodes , idMap );
     var diagnosis = diagnose( nodes , edges , errors , warnings );
 
-    printjson(edges);
+   // printjson(edges);
 
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
@@ -160,6 +162,10 @@ function pingCluster( host , verbosity ) {
     printjson( {"ok" : 1} );
 }
 
+function showEdges(){
+//    printjson( history[
+}
+
 //currently unused
 function buildUserView( diagnosis , verbosity ){
     var userView = {};
@@ -170,11 +176,41 @@ function buildUserView( diagnosis , verbosity ){
 }
  
 var ERR = {
-    "MISSING_REQ_CONNECTION" : "Missing required connection",
-    "MISSING_REC_CONNECTION" : "Missing recommended connection",
+    "SHARD_IS_STANDALONE_MONGOD" : "Shard is standalone mongod instance, not replica set primary",
+    "MISSING_REQ_CONN" : "Missing required connection to ",
+    "MISSING_REC_CONN" : "Missing recommended connection to ",
     "CLIENT_CONNECTION_ERROR" : "Unable to make client connection",
     "NO_REPL_SET_NAME_NOTED" : "No replica set name noted",
-    "CONFIG_SERVER_IS_ALSO_SHARD_SERVER" : "This config server is also a shard server"
+    "CONFIG_SERVER_IS_ALSO_SHARD_SERVER" : "This config server is also a shard server",
+    "REPORTS_DIF_REPLSET_NAME" : "Reports different replset name from primary",
+    "REPL_SET_NO_MASTER" : "No master found for replica set",
+    "REPL_SET_NOT_CONN" : "Replica set not fully connected",
+    "CAN'T_CONNECT_TO_REPL_SET_PRIMARY" : "Unable to connect to this primary's replica set",
+    "NOT_CONNECTED_TO_REPL_SET" : "Not connected to its replica set"
+}
+
+function addError( key , msg , errors ){
+    if( errors[ key ] == null ){
+	errors[ key ] = new Array();
+	errors[ key ].push( msg );
+	return;
+    }
+    for (var i=0; i< errors[key].length; i++)
+	if( errors[key][i] == msg )
+	    return;
+    errors[ key ].push( msg );
+} 
+
+function addWarning( key , msg , warnings ){
+     if( warnings[ key ] == null ){
+	warnings[ key ] = new Array();
+	warnings[ key ].push( msg );
+	return;
+    }
+    for (var i=0; i< warnings[key].length; i++)
+	if( warnings[key][i] == msg )
+	    return;
+    warnings[ key ].push( msg );
 }
 
 var reqConnChart = {
@@ -201,21 +237,24 @@ function isRecConn( src , tgt , nodes ){
 
 function diagnose( nodes , edges , errors , warnings){
     var diagnosis = {};
-    
+
     //check edges
     for( var src in edges ){
 	for( var tgt in edges[src] ){
 	    if( edges[ src ][ tgt ]["isConnected"] == false){
 		if( isReqConn( src , tgt , nodes ) )
-		    errors[ nodes[src]["key"] + " -> " + nodes[tgt]["key"] ]  
-			=  ERR["MISSING_REQ_CONNECTION"]; 
+		    addError( nodes[src]["key"] , ERR["MISSING_REQ_CONN"] + nodes[tgt]["key"] , errors );  
 		if( isRecConn( src , tgt , nodes ) )
-		    warnings[ nodes[src]["key"] + " -> " + nodes[tgt]["key"] ] 
-			= ERR["MISSING_REC_CONNECTION"]; 
+		    addWarning( nodes[src]["key"] , ERR["MISSING_REC_CONN"] + nodes[tgt]["key"] , warnings ); 
 	    }
 	}
     }
+
     //check replica sets
+    for(var curr in nodes){
+	if( nodes[curr]["role"] == "primary" )
+	    checkReplSet( curr , nodes , errors , warnings );
+    }
 
     //check if config server is also a shard server
     var configSvrs = new Array(); 
@@ -224,9 +263,9 @@ function diagnose( nodes , edges , errors , warnings){
 	    configSvrs.push( curr );
     }
     for(var curr in nodes){
-	for(var svr in configSvrs){
-	    if( curr == svr && nodes[curr]["role"] != "config")
-		warnings[ nodes[curr]["key"] ] = "CONFIG_SERVER_IS_ALSO_SHARD_SERVER" + " role: " + nodes[curr]["role"];
+	for(var i=0; i< configSvrs.length; i++){
+	    if( curr == configSvrs[i] && nodes[curr]["role"] != "config")
+		addWarning( nodes[curr]["key"] , ERR["CONFIG_SERVER_IS_ALSO_SHARD_SERVER"] , warnings );
 	}
     }	
     
@@ -237,43 +276,51 @@ function diagnose( nodes , edges , errors , warnings){
 
 }
 
-/* currently unused
-function pingShardedReplSet( host ) {
+function checkReplSet( primary , nodes , errors , warnings ){
 
-    var conn = new Mongo( host );
+    var errorArray = new Array();
+
+    try{
+    var conn = new Mongo( nodes[primary]["hostName"] );
     var db = conn.getDB("admin");
+    }
+    catch(e){
+	addError( nodes[primary]["key"] , ERR["CAN'T_CONNECT_TO_REPL_SET_PRIMARY"] , errors );
+	return;
+    }
+
     var connStatus = true;
     var masterStats = db.runCommand( { ismaster : 1 } );
-       
+      
     if(masterStats["hosts"])	
     {
-	if(!masterStats["setName"] || masterStats["setName"] == "")
-	    warnings["primmary"].push("No replica set name noted for set with primary " + primary);
+	var setName;
+	if(!masterStats["setName"] || masterStats["setName"] == ""){
+	    addWarning( nodes[primary]["key"]  , ERR["NO_REPL_SET_NAME_NOTED"] , warnings);
+	    setName = null;
+	}
 	else
-	   var setName = masterStats["setName"];
+	    setName = masterStats["setName"];
 	var serverSet = masterStats["hosts"];
 	for(var i=0; i<serverSet.length; i++){
-	    var curr_conn = new Mongo( serverSet[i] );
-	    var curr_db = curr_conn.getDB("admin");
-	    var curr_masterStats = curr_db.runCommand( { ismaster : 1 } ); 
-	    //Check if replica set name matches primary's replica set name 
-	    if( masterStats["setName"] && curr_masterStats["setName"] != setName )
-		errors["primary"].push("Replica set secondary " + serverSet[i] + 
-		    " disagrees with primary " + primary + " on replica set name"); 
-	    //Check if current node is connected to the other nodes in the set 
-	    var curr_stats = curr_db.runCommand( { "ping" : 1, hosts : serverSet } ) ;
-	    for(j=0; j<serverSet.length; j++){
-		if(curr_stats[serverSet[j]]["isConnected"] == false){
-		    errors["primary"].push("A replica set is not fully connected -- " + serverSet[i]
-			+ " " + curr_stats[serverSet[j]]["connInfo"]); 
-		connStatus = false;	
-		}  
+	    try{ 
+		var curr_conn = new Mongo( serverSet[i] );
+		var curr_db = curr_conn.getDB("admin"); 
+		var curr_masterStats = curr_db.runCommand( { ismaster : 1 } ); 
+		//Check if replica set name matches primary's replica set name 
+		if( setName != null && curr_masterStats["setName"] != setName )
+		    addError( nodes[primary]["replSetName"] , ERR["NODES_DIAGREE_ON_REPLSET_NAME"] , errors ); 
+		//Check if current node is connected to the other nodes in the set 
+		var curr_stats = curr_db.runCommand( { "ping" : 1, hosts : serverSet } ) ;
+		for(j=0; j<serverSet.length; j++)
+		    if(curr_stats[ serverSet[j] ]["isConnected"] == false)
+			addError( nodes[primary]["replSetName"] , ERR["REPL_SET_NOT_CONN"] , errors );
 	    }
+	    catch(e) { }  
 	}	
-     }
-    return connStatus;
+    }
+ 
 }
-*/
 
 //Although the {ping} function takes an array of hosts to ping, this function
 //pings each node one at a time (passes an array of one element to {ping})
@@ -291,9 +338,6 @@ function buildGraph( nodes , edges , errors , warnings ){
 		    var admin = conn.getDB("admin"); 
 		    var pingInfo = 
 			admin.runCommand( { "ping" : 1, hosts : [nodes[tgtNode]["hostName"]] } );
-
-		    printjson(pingInfo);
-
 		    if( pingInfo[ nodes[tgtNode]["hostName"] ][ "isConnected" ] == false){
 			newEdge["isConnected"] = false;
 			newEdge["errmsg"] = pingInfo[ nodes[tgtNode]["hostName"] ][ "errmsg" ];	
@@ -306,15 +350,17 @@ function buildGraph( nodes , edges , errors , warnings ){
 		    }
 		    newEdge["bytesSent"] = pingInfo[ nodes[tgtNode]["hostName"] ]["bytesSent"];
 		    newEdge["bytesReceived"] = pingInfo[ nodes[tgtNode]["hostName"] ]["bytesReceived"]; 
-		    newEdge["totalSocketExceptions"] =
-			    pingInfo[ nodes[tgtNode]["hostName"] ]["numPastSocketExceptions"];	
-		    newEdge["connectionSocketExceptions"] = 
-			pingInfo[ nodes[tgtNode]["hostName"] ]["numSocketExceptions"]; 
+		    newEdge["incomingSocketExceptions"] =
+			pingInfo[ nodes[tgtNode]["hostName"] ]["incomingSocketExceptions"];	
+		    newEdge["outgoingSocketExceptions"] =
+			pingInfo[ nodes[tgtNode]["hostName"] ]["outgoingSocketExceptions"]; 
+		    newEdge["clientSocketExceptions"] = 
+			pingInfo[ nodes[tgtNode]["hostName"] ]["clientSocketExceptions"]; 
 		    edges[ srcNode ][ tgtNode ] = newEdge;	    
 		}
 		catch(e){
 	//	    edges[ srcNode ][ tgtNode ] = e;
-		    errors[ nodes[srcNode]["key"] ] = ERR["CLIENT_CONNECTION_ERROR"];	
+		    addError( nodes[srcNode]["key"] , ERR["CLIENT_CONNECTION_ERROR"] , errors );	
 	    	} 
 	    }
 	}
@@ -337,8 +383,8 @@ function getConfigServers( adminDB , nodes , index , errors , warnings ){
 	    + "_" + nodes[id]["machine"] 
 	    + "_" + nodes[id]["process"];
     }
-    else{
-	warnings["NO_CONFIG_SERVER_NOTED"]}
+    else
+	addWarning( "cluster" , ERR["NO_CONFIG_SERVER_NOTED"] , warnings );
     return index;
 }
 
@@ -362,8 +408,6 @@ function getMongosServers( config , nodes , index , errors , warnings ){
 
 function getShardServers( configDB , nodes , index , errors , warnings ){
         configDB.shards.find().forEach( function(doc) {
-
-
 	// if the shard is a replica set 
 	// do string parsing for shard servers
 	// originally in format "shard-01/lcalhost:30000,localhost:30001,localhost:30002"	
@@ -390,27 +434,35 @@ function getShardServers( configDB , nodes , index , errors , warnings ){
 		try{
 		    var conn = new Mongo( hosts[i] );
 		    var admin = conn.getDB("admin");
+		    try{
 		    var masterStats = admin.runCommand( { ismaster : 1 } );
 		    nodes[id]["replSetName"] = masterStats["setName"];
+		    } catch(e) {
+			addWarning( nodes[id]["key"] , ERR["NO_REPL_SET_NAME_NOTED"] , warnings );
+		    } 
 		    //add check for no config server noted
 		}
 		catch(e){
-		    nodes[id]["replSetName"] = "undefined";
-		    nodes[id]["warnings"].push( ERR["NO_REPL_SET_NAME_NOTED"] );
-		}  
+		    nodes[id]["replSetName"] = null;
+    		}  
 	    }	
 	 }
         
 	//if the shard has a standalone mongod instance 
 	else{
-	    var newNode = {};
-	    newNode[id] = index;
+	    var id = index;
 	    index++;
-	    newNode["hostName"] = doc["host"] 
-	    newNode["machine"] = ""; //to be expanded later
-	    newNode["process"] = "mongod";
-	    nodes[id]["key"] = nodes[id]["hostName"] + "_" + nodes[id]["machine"] + "_" + nodes[id]["process"];
-	    nodes.push(newNode);	
+	    nodes[id] = {};
+	    nodes[id]["hostName"] = doc["host"];
+	    nodes[id]["machine"] = ""; //to be expanded later
+	    nodes[id]["process"] = "mongod";
+	    nodes[id]["role"] = "mongod";	
+	    nodes[id]["errors"] = new Array();
+	    nodes[id]["warnings"] = new Array();
+	    nodes[id]["key"] = nodes[id]["hostName"] 
+				+ "_" + nodes[id]["machine"] 
+				+ "_" + nodes[id]["process"];
+	    addWarning( nodes[id]["key"] , ERR["SHARD_IS_STANDALONE_MONGOD"] , warnings );
 	}
     });
     return index;	
@@ -459,6 +511,15 @@ function showHistory(){
 }
 
 function calculateStats(){
+
+    var count=0;
+    for (var moment in history["snapshots"])
+	count++;
+    if(count < 1){
+	print("Not enough snapshots to calculate statistics. Please ping cluster at least once.");
+	return;
+    }
+
     var edgeStats = {};
     for( var srcName in history["allNodes"] ){
 	edgeStats[ srcName ] = {};
@@ -468,8 +529,15 @@ function calculateStats(){
 		    "numPingAttempts" : 0,
 		    "numSuccessful" : 0,
 		    "numFailed" : 0,	
-		    "totalSocketExceptions" : 0,
-		    "percentageIsConnected" :0,
+		    "percentageIsConnected" : 0,
+		    "avgIncomingSocketExceptions" : 0,
+		    "avgOutgoingSocketExceptions" : 0,
+		    "totalIncomingSocketExceptions" : 0,
+		    "totalOutgoingSocketExceptions" : 0,
+		    "avgBytesSent" : 0,
+		    "avgBytesReceived" : 0,
+		    "totalBytesSent" : 0,
+		    "totalBytesReceived" : 0,
 		    "maxPingTimeMicrosecs" : null,
 		    "minPingTimeMicrosecs" : null,
 		    "sumPingTimeMicrosecs" : 0,
@@ -480,22 +548,45 @@ function calculateStats(){
 	    }
     	}	
     }
+
     // max ping time, min ping time, num ping attempts, num successful, num failed, num socketexceptions
     for(var moment in history["snapshots"]){	
 	var currEdges = history["snapshots"][moment]["edges"];	
+
 	for( var srcName in history["allNodes"] ){
 	    for( var tgtName in history["allNodes"] ){
+	
 		if( srcName != tgtName){	
 		    var src = history["snapshots"][moment]["idMap"][ srcName ];	
 		    var tgt = history["snapshots"][moment]["idMap"][ tgtName ];
-		    if( currEdges[ src ][ tgt ] != null ){ //if edge existed in this snapshot
+		   
+		    // if edge existed in this snapshot 
+		    if( currEdges[ src ][ tgt ] != null ){
 			edgeStats[ srcName ][ tgtName ]["numPingAttempts"]++;
-			edgeStats[ srcName ][ tgtName ]["totalSocketExceptions"] 
-			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalSocketExceptions"])
-			    + parseInt(currEdges[ src ][ tgt ]["totalSocketExceptions"]);
+
+			edgeStats[ srcName ][ tgtName ]["totalIncomingSocketExceptions"] 
+			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalIncomingSocketExceptions"])
+			    + parseInt("" + currEdges[ src ][ tgt ]["incomingSocketExceptions"]);
+
+			edgeStats[ srcName ][ tgtName ]["totalOutgoingSocketExceptions"] 
+			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalOutgoingSocketExceptions"])
+			    + parseInt("" + currEdges[ src ][ tgt ]["outgoingSocketExceptions"]);
+
+
+			edgeStats[ srcName ][ tgtName ]["totalBytesSent"] 
+			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalBytesSent"])
+			    + parseInt("" + currEdges[ src ][ tgt ]["bytesSent"]);
+
+			edgeStats[ srcName ][ tgtName ]["totalBytesReceived"] 
+			    = parseInt(edgeStats[ srcName ][ tgtName ]["totalBytesReceived"])
+			    + parseInt("" + currEdges[ src ][ tgt ]["bytesReceived"]);
+
 			if( currEdges[ src ][ tgt ]["isConnected"] == true){
+
 			    edgeStats[ srcName ][ tgtName ]["numSuccessful"]++;
+
 			    var pingTime = currEdges[ src ][ tgt ]["pingTimeMicrosecs"];
+			
 			    if( edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"] == null 
 				|| pingTime > edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"])
 				edgeStats[ srcName ][ tgtName ]["maxPingTimeMicrosecs"] = parseInt(pingTime);	
@@ -516,19 +607,40 @@ function calculateStats(){
     // avg ping time and percentage connected 
     for( var srcName in history["allNodes"] ){
 	for( var tgtName in history["allNodes"] ){
+
 	    if( srcName != tgtName){
+
 		if( edgeStats[ srcName ][ tgtName ]["numSuccessful"] > 0 ){
 		    edgeStats[ srcName ][ tgtName ]["avgPingTimeMicrosecs"] 
 			= parseFloat( edgeStats[ srcName ][ tgtName ]["sumPingTimeMicrosecs"]) 
 			/ parseFloat( edgeStats[ srcName ][ tgtName ]["numSuccessful"]);	
 		}	
+
+		edgeStats[ srcName ][ tgtName ]["avgIncomingSocketExceptions"] = 
+		    parseFloat( edgeStats[ srcName ][ tgtName ]["totalIncomingSocketExceptions"])
+		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numPingAttempts"] );
+
+		edgeStats[ srcName ][ tgtName ]["avgOutgoingSocketExceptions"] = 
+		    parseFloat( edgeStats[ srcName ][ tgtName ]["totalOutgoingSocketExceptions"])
+		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numPingAttempts"] );
+
+		edgeStats[ srcName ][ tgtName ]["avgBytesSent"] = 
+		    parseFloat( edgeStats[ srcName ][ tgtName ]["totalBytesSent"])
+		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numPingAttempts"] );
+
+		edgeStats[ srcName ][ tgtName ]["avgBytesReceived"] = 
+		    parseFloat( edgeStats[ srcName ][ tgtName ]["totalBytesReceived"])
+		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numPingAttempts"] );
+
+
 		edgeStats[ srcName ][ tgtName ]["percentageIsConnected"] = 100  
 		    * parseFloat( edgeStats[ srcName ][ tgtName ]["numSuccessful"]) 
 		    / parseFloat( edgeStats[ srcName ][ tgtName ]["numPingAttempts"]);	
 	    }
 	}
     }
-    // standard deviation
+
+    // ping time standard deviation
     for(var moment in history["snapshots"]){	
 	var currEdges = history["snapshots"][moment]["edges"];	
 	for( var srcName in history["allNodes"] ){
@@ -560,15 +672,11 @@ function calculateStats(){
 	    }	
 	}
     }
-    var count=0;
-    for (var moment in history["snapshots"])
-	count++;
-    if(count < 1)
-	print("Not enough snapshots to calculate statistics. Please ping cluster at least once.");
-    else{
-	history["stats"] = edgeStats; 
-	printjson("{ ok : 1 }");
-    }	
+    
+    history["stats"] = edgeStats; 
+    printjson("{ ok : 1 }");
+ 
+    return;   
 }
 
 function showStats(){
@@ -606,10 +714,13 @@ function calculateDeltas(){
 		    deltas[ moment ]["removedNodes"].push( prevNode );	    	
 	
 	    //check for added/removed errors and warnings
-	    for( var currError in currSnapshot["errors"] )
-		if( prevSnapshot["errors"][ currError ] == null
-		    || prevSnapshot["errors"][ currError ] != currSnapshot["errors"][ currError ] )
-		    deltas[ moment ]["newErrors"].push( currError + ":" + currSnapshot["errors"][ currError ]);
+	    for( var src in currSnapshot["errors"] ){
+		for(var i=0; i<currSnapshot["errors"][src].length; i++){
+		    if( snapshotHasError( src , currSnapshot["errors"][src][i] , prevSnapshot ) )
+			deltas[ moment ]["newErrors"].push( src + ":" + currSnapshot["errors"][ src ][i]);
+		}
+	    }
+/*
 	    for( var prevError in prevSnapshot["errors"] )
 		if( currSnapshot["errors"][ prevError ] == null
 		    || currSnapshot["errors"][ prevError ] != prevSnapshot["errors"][ prevError ] )
@@ -622,7 +733,7 @@ function calculateDeltas(){
 		if( currSnapshot["warnings"][ prevWarning ] == null
 		    || currSnapshot["warnings"][ prevWarning ] != prevSnapshot["warnings"][ prevWarning ] )
 		    deltas[ moment ]["removedWarnings"].push( prevWarning + ":" + prevSnapshot["warnings"][ prevWarning ]); 
-
+*/
 	}
 	prevMoment = moment; 
 	count++;  
@@ -633,6 +744,19 @@ function calculateDeltas(){
 	history["deltas"] = deltas; 
 	printjson("{ ok : 1 }");
     }
+}
+
+function snapshotHasError( src , error , prevSnapshot ){
+    if( prevSnapshot["errors"][ src ] == null)
+	return false;
+    for(var i=0; i<prevSnapshot["errors"][ src ].length; i++)
+	if( error == prevSnapshot["errors"][src][i] )
+	    return true;     
+    return false;
+}
+
+function snapshotHasWarning(){
+
 }
 
 function showDeltas(){

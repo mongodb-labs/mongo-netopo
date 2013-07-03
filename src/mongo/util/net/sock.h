@@ -156,11 +156,11 @@ namespace mongo {
 	    //std::time_t time = std::time(NULL);
 	    //recordException( t , server , time ); 
 
-	    // TODO: add locking
-	    //boost::mutex::scoped_lock lk( _mutex ); 
-	   
-	    // TODO: differentiate between incoming and outgoing exceptions 
-	    exceptionHistory[ server ]++;
+	    boost::mutex::scoped_lock lk( _mutex ); 
+	    if( server == prettyHostName() )
+		incomingExceptions[ server ] = 5;
+	    else
+		outgoingExceptions[ server ]++;
 	}
 
 
@@ -171,12 +171,16 @@ namespace mongo {
         virtual const std::string* server() const { return &_server; }
 
 	// return the number of socket exceptions this server has seen to a particular remote host
-	static long long getNumExceptions( std::string remoteHost );	
- 
-  private:
+	static long long numIncomingExceptions( std::string remoteHost );	
+	static long long numOutgoingExceptions( std::string remoteHost ); 
+  
+    private:
+	
+	static boost::mutex _mutex;
 
 	// store the number of SocketExceptions thrown by this server
-	static std::map< std::string, long long> exceptionHistory;
+	static std::map< std::string, long long> outgoingExceptions;
+	static std::map< std::string, long long> incomingExceptions;
 
         // TODO: Allow exceptions better control over their messages
         static string _getStringType( Type t ){

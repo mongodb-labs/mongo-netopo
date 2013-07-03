@@ -219,17 +219,13 @@ namespace mongo {
 		currServer.append("bytesReceived" , Socket::getBytesReceived( hp ));	
 		//note the amount of data sent to this host
 		currServer.append("bytesSent" , Socket::getBytesSent( hp ));	   
-/*
-		//note hosts received from
-		currServer.append("receivedFrom" , Socket::getHostsReceivedFrom( hp ));
-		currServer.append("sentTo" , Socket::getHostsSentTo( hp ));
-*/		
+		
 		//count the number of socket exceptions seen to or from this host 
-		int numPastSocketExceptions = SocketException::getNumExceptions( hp );
-		currServer.append("numPastSocketExceptions" , numPastSocketExceptions);
+		currServer.append("incomingSocketExceptions" , SocketException::numIncomingExceptions( hp ));
+		currServer.append("outgoingSocketExceptions" , SocketException::numOutgoingExceptions( hp ));
 
 		//count the number of socket exceptions seen to this host while trying to ping it 
-		currServer.append("numSocketExceptions" , numSocketExceptions);
+		currServer.append("clientSocketExceptions" , numSocketExceptions);
 		
 		result.append(it->String(), currServer.obj());
 	    }
