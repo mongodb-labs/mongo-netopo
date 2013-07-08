@@ -42,7 +42,7 @@ function pingReplSet( host ){
     var conn = new Mongo( host );
     var db = conn.getDB("admin");
     var connStatus = true;
-    var masterStats = db.runCommand( { ismaster : 1 } );
+    var masterStats = db.runCommand( { "isMaster" : 1 } );
     
     var output = {};
     output["errors"] = new Array();
@@ -63,7 +63,7 @@ function pingReplSet( host ){
 	for(var i=0; i<serverSet.length; i++){
 	    var curr_conn = new Mongo( serverSet[i] );
 	    var curr_db = curr_conn.getDB("admin");
-	    var curr_masterStats = curr_db.runCommand( { ismaster : 1 } ); 
+	    var curr_masterStats = curr_db.runCommand( { "isMaster" : 1 } ); 
 	    
 	    //Check if this node's replica set name matches primary's replica set name 
 	    if( masterStats["setName"] && curr_masterStats["setName"] != setName )
@@ -141,7 +141,7 @@ function pingCluster( host , verbosity ) {
     buildIdMap( nodes , idMap );
     var diagnosis = diagnose( nodes , edges , errors , warnings );
 
-//    printjson(nodes);
+    printjson(nodes);
 
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
@@ -283,7 +283,7 @@ function checkReplSet( primary , nodes , errors , warnings ){
     }
 
     var connStatus = true;
-    var masterStats = db.runCommand( { ismaster : 1 } );
+    var masterStats = db.runCommand( { "isMaster" : 1 } );
       
     if(masterStats["hosts"])	
     {
@@ -299,7 +299,7 @@ function checkReplSet( primary , nodes , errors , warnings ){
 	    try{ 
 		var curr_conn = new Mongo( serverSet[i] );
 		var curr_db = curr_conn.getDB("admin"); 
-		var curr_masterStats = curr_db.runCommand( { ismaster : 1 } ); 
+		var curr_masterStats = curr_db.runCommand( { "isMaster" : 1 } ); 
 		//Check if replica set name matches primary's replica set name 
 		if( setName != null && curr_masterStats["setName"] != setName )
 		    addError( nodes[primary]["replSetName"] , ERR["NODES_DIAGREE_ON_REPLSET_NAME"] , errors ); 
@@ -363,48 +363,48 @@ function buildGraph( nodes , edges , errors , warnings ){
 
 function getConfigServers( adminDB , nodes , index , errors , warnings ){
     try{
-    configSvr = adminDB.runCommand( { getCmdLineOpts : 1 });
-    if(configSvr != null && configSvr != ""){
-	var id = index;
-	index++;
-	nodes[id] = {};
-	nodes[id]["hostName"] = configSvr["parsed"]["configdb"];
-	nodes[id]["machine"] = ""; //to be expanded later
-	nodes[id]["process"] = "mongod";	
-	nodes[id]["errors"] = new Array();
-	nodes[id]["warnings"] = new Array();
-	nodes[id]["role"] = "config";
-	nodes[id]["key"] = nodes[id]["hostName"] 
-	    + "_" + nodes[id]["machine"] 
-	    + "_" + nodes[id]["process"];
-    }
-    else
-	addWarning( "cluster" , ERR["NO_CONFIG_SERVER_NOTED"] , warnings );
+	configSvr = adminDB.runCommand( { getCmdLineOpts : 1 });
+	if(configSvr != null && configSvr != ""){
+	    var id = index;
+	    index++;
+	    nodes[id] = {};
+	    nodes[id]["hostName"] = configSvr["parsed"]["configdb"];
+	    nodes[id]["machine"] = ""; //to be expanded later
+	    nodes[id]["process"] = "mongod";	
+	    nodes[id]["errors"] = new Array();
+	    nodes[id]["warnings"] = new Array();
+	    nodes[id]["role"] = "config";
+	    nodes[id]["key"] = nodes[id]["hostName"] 
+		+ "_" + nodes[id]["machine"] 
+		+ "_" + nodes[id]["process"];
+	    collectClientInfo( id , nodes , errors , warnings );
+	}
+	else
+	    addWarning( "cluster" , ERR["NO_CONFIG_SERVER_NOTED"] , warnings );
     } catch(e) {
-	addError( "cluster" , ERR["CONFIG_DOWN"] , errors );
-    }
-    return index;
+
+    } 
+        return index;
 }
 
 function getMongosServers( config , nodes , index , errors , warnings ){
     try{
-    config.mongos.find().forEach( function(doc) {
-	var id = index;
-	index++;
-	nodes[id] = {};
-	nodes[id]["hostName"] = doc["_id"];
-	nodes[id]["machine"] = ""; //to be expanded later
-	nodes[id]["process"] = "mongos";
-	nodes[id]["role"] = "mongos";	
-    	nodes[id]["errors"] = new Array();
-	nodes[id]["warnings"] = new Array();
-	nodes[id]["key"] = nodes[id]["hostName"] 
-			    + "_" + nodes[id]["machine"] 
-			    + "_" + nodes[id]["process"];
-    });
-    } catch(e) {
-	addError( "cluster" , ERR["CONFIG_DOWN"] , errors );
-    }
+	config.mongos.find().forEach( function(doc) {
+	    var id = index;
+	    index++;
+	    nodes[id] = {};
+	    nodes[id]["hostName"] = doc["_id"];
+	    nodes[id]["machine"] = ""; //to be expanded later
+	    nodes[id]["process"] = "mongos";
+	    nodes[id]["role"] = "mongos";	
+	    nodes[id]["errors"] = new Array();
+	    nodes[id]["warnings"] = new Array();
+	    nodes[id]["key"] = nodes[id]["hostName"] 
+				+ "_" + nodes[id]["machine"] 
+				+ "_" + nodes[id]["process"];
+	    collectClientInfo( id , nodes , errors , warnings );
+	});
+    } catch(e) { addError( "cluster" , ERR["CONFIG_DOWN"] , errors ); }
     return index;
 }
 
@@ -434,22 +434,9 @@ function getShardServers( configDB , nodes , index , errors , warnings ){
 		    nodes[id]["role"] = "primary";	
 		else
 		    nodes[id]["role"] = "secondary";
-		try{
-		    var conn = new Mongo( hosts[i] );
-		    var admin = conn.getDB("admin");
-		    try{
-		    var masterStats = admin.runCommand( { ismaster : 1 } );
-		    nodes[id]["replSetName"] = masterStats["setName"];
-		    } catch(e) {
-			addWarning( nodes[id]["key"] , ERR["NO_REPL_SET_NAME_NOTED"] , warnings );
-		    } 
-		    //add check for no config server noted
-		}
-		catch(e){
-		    nodes[id]["replSetName"] = null;
-    		}  
+		collectClientInfo( id , nodes , errors , warnings );
 	    }	
-	 }
+	}
 	//if the shard has a standalone mongod instance 
 	else{
 	    var id = index;
@@ -458,12 +445,13 @@ function getShardServers( configDB , nodes , index , errors , warnings ){
 	    nodes[id]["hostName"] = doc["host"];
 	    nodes[id]["machine"] = ""; //to be expanded later
 	    nodes[id]["process"] = "mongod";
-	    nodes[id]["role"] = "mongod";	
+	    nodes[id]["role"] = "primary";	
 	    nodes[id]["errors"] = new Array();
 	    nodes[id]["warnings"] = new Array();
 	    nodes[id]["key"] = nodes[id]["hostName"] 
 				+ "_" + nodes[id]["machine"] 
 				+ "_" + nodes[id]["process"];
+	    collectClientInfo( id , nodes , errors , warnings ); 
 	    addWarning( nodes[id]["key"] , ERR["SHARD_IS_STANDALONE_MONGOD"] , warnings );
 	}
     });
@@ -471,6 +459,52 @@ function getShardServers( configDB , nodes , index , errors , warnings ){
 	addError( "cluster" , ERR["CONFIG_DOWN"] , errors );
     }
     return index;	
+}
+
+function collectClientInfo( id , nodes , errors , warnings ){
+    //refine error catching
+    try{ var currConn = new Mongo( nodes[id]["hostName"] ); 
+	try{ var currAdminDB = currConn.getDB("admin");
+	    
+	    // all nodes collect the following:
+	    try{ nodes[id]["hostInfo"] = currAdminDB.runCommand({ "hostInfo" : 1 }); }
+	    catch(e) { nodes[id]["hostInfo"] = null; }
+	    try{ nodes[id]["serverStatus"] = currAdminDB.runCommand({ "serverStatus" : 1 }); }
+	    catch(e) { nodes[id]["serverStatus"] = null; } 
+	    /* add check for no config server noted */	  
+
+	    // only mongod nodes collect the following:  
+	    if( nodes[id]["process"] == "mongod" ){ 
+		try{ nodes[id]["buildInfo"] = currAdminDB.runCommand({ "buildInfo" : 1 }); }
+		catch(e) { nodes[id]["buildInfo"] = null; }    	
+	    }
+	   
+	    // only shard mongod nodes collect the following:
+	    if( nodes[id]["role"] == "primary" || nodes[id]["role"] == "secondary" ){
+		try{
+		    var masterStats = currAdminDB.runCommand( { "isMaster" : 1 } );
+		    try{ nodes[id]["replSetName"] = masterStats["setName"]; }
+		    catch(e){
+			addWarning( nodes[id]["key"] , ERR["NO_REPL_SET_NAME_NOTED"] , warnings );
+			nodes[id]["replSetName"] = null;
+		    }	
+		}
+		catch(e){} 
+	    }
+	} catch(e) { /*couldn't connect to admin database*/ }
+
+	try{ var currTestDB = currConn.getDB("test");
+	    // all nodes collect the following:	
+	    try{ nodes[id]["shardVersion"] = currAdminDB.test.runCommand({ "getShardVersion" : 1 }); }
+	    catch(e) { nodes[id]["getShardVersion"] = null; }
+	} catch(e) { /*couldn't connect to test database*/ } 
+    
+    } catch(e) { 
+	addWarning( nodes[id]["key"] , "Couldn't collect client info" , warnings );
+	/*couldn't connect to host*/
+     } 
+
+    return;
 }
 
 function buildIdMap( nodes , idMap ){
