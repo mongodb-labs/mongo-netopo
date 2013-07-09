@@ -157,7 +157,7 @@ namespace mongo {
 
 	    boost::mutex::scoped_lock lk( _mutex ); 
 	    if( server == prettyHostName() )
-		incomingExceptions[ server ] = 5;
+		incomingExceptions[ server ]++;
 	    else
 		outgoingExceptions[ server ]++;
 	}

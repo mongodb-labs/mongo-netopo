@@ -146,7 +146,7 @@ namespace mongo {
 					    std::vector<Privilege>* out) {} // No auth required
 
 	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-//	    result.append("output" , PingMonitor::getNumTimes( ));
+	    result.append("output" , PingMonitor::getNumTimes( ));
 	    return true;
 	}
 
@@ -240,7 +240,10 @@ namespace mongo {
 
 		//count the number of socket exceptions seen to this host while trying to ping it 
 		currServer.append("clientSocketExceptions" , numSocketExceptions);
-		
+
+		//delete after testing for PingMonitorCommand	
+		result.append("output" , PingMonitor::getNumTimes( ));
+	
 		result.append(it->String(), currServer.obj());
 	    }
 	    return true;

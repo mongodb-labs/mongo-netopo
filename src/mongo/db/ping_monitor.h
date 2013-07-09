@@ -27,17 +27,15 @@
        class PingMonitor : public BackgroundJob {
     public:
         PingMonitor(){}
-
         virtual ~PingMonitor(){}
         virtual string name() const { return "PingMonitor"; }
-        static int numTimes;
         static int getNumTimes();
 	void doPingForHost( const string& hp );
-
+    private:
+        static int numTimes;
         virtual void run();
     };
  
     void startPingBackgroundJob();
- 
 
 }
