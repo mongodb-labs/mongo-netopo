@@ -99,9 +99,9 @@ function createShardedCluster() {
 
     // ShardingTest = function( testName, numShards, verboseLevel, numMongos, otherParams )
     // testName is the cluster name	
-    s = new ShardingTest( "shard1" , 3 , 0 , 3 );
+//    s = new ShardingTest( "shard1" , 3 , 0 , 3 );
 //    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , shards:6 , config:3 } );
-//    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
+    s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
    return s;			
 
 }
@@ -109,17 +109,17 @@ function createShardedCluster() {
 // Takes in a connection of the form "host:port" and returns a complete graph of the connections
 // associated with this node
 function pingCluster( host , verbosity ) {
-    try{ var conn = new Mongo( host );}
+    try{ var conn = new Mongo( host ); }
     catch(e){
 	print("Unable to connect to input host.");
 	return;
     } 
-    try{var configDB = conn.getDB(config); }
+    try{ var configDB = conn.getDB(config); }
     catch(e){
 	print("Unable to connect to config database from input host.");
 	return;
     }
-    try{var adminDB = conn.getDB("admin");}
+    try{ var adminDB = conn.getDB("admin"); }
     catch(e){
 	print("Unable to connect to admin database on input host.");
 	return;
@@ -141,7 +141,7 @@ function pingCluster( host , verbosity ) {
     buildIdMap( nodes , idMap );
     var diagnosis = diagnose( nodes , edges , errors , warnings );
 
-    printjson(nodes);
+//    printjson(nodes);
 
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
@@ -154,8 +154,9 @@ function pingCluster( host , verbosity ) {
     printjson( {"ok" : 1} );
 }
 
-function showEdges(){
-//    printjson( history[
+function printEdges( edges ){
+
+
 }
 
 //currently unused
@@ -387,9 +388,9 @@ function getConfigServers( adminDB , nodes , index , errors , warnings ){
         return index;
 }
 
-function getMongosServers( config , nodes , index , errors , warnings ){
+function getMongosServers( configDB , nodes , index , errors , warnings ){
     try{
-	config.mongos.find().forEach( function(doc) {
+	configDB.mongos.find().forEach( function(doc) {
 	    var id = index;
 	    index++;
 	    nodes[id] = {};
@@ -509,10 +510,7 @@ function collectClientInfo( id , nodes , errors , warnings ){
 
 function buildIdMap( nodes , idMap ){
     for ( var curr in nodes ){
-	idMap[ nodes[curr]["hostName"] 
-	    + "_" + nodes[curr]["machine"] 
-	    + "_" + nodes[curr]["process"] ] 
-	    = curr;
+	idMap[ nodes["key"] ] = curr;
     }
 }
 
