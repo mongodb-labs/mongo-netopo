@@ -151,7 +151,6 @@ namespace mongo {
 		string targetString = cmdObj.getStringField("target");
 		HostAndPort newTarget( targetString );
 		PingMonitor::setTarget( newTarget );
-		
 		result.append("newTarget" , PingMonitor::getTarget() ); 
 	    }
 

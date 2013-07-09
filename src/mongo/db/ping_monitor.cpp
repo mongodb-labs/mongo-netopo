@@ -34,6 +34,8 @@ namespace mongo {
 
     // PingMonitor
 
+    boost::mutex PingMonitor::_mutex;
+
     BSONObj PingMonitor::monitorResults;
     BSONObj PingMonitor::getMonitorResults(){ return monitorResults; }
  
@@ -41,7 +43,15 @@ namespace mongo {
 
     HostAndPort PingMonitor::target(defaultTarget);
 
-    void PingMonitor::setTarget( HostAndPort newTarget ){ target = newTarget; }
+    void PingMonitor::setTarget( HostAndPort newTarget ){
+	target = newTarget;
+	// run one ping right now with the updated target so the user gets results from the
+	// expected target; otherwise would be more likely that the last pinged target would
+	// still be stored in monitorResults and those outdated results would be returned
+	// to the user
+	doPingForTarget();	
+    }
+
     string PingMonitor::getTarget(){ return target.toString(true); } 
 
     void PingMonitor::doPingForTarget(){

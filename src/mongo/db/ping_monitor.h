@@ -23,6 +23,9 @@
 #include "ping_monitor.h"
 #include "mongo/util/background.h"
 #include "mongo/util/net/hostandport.h"
+#include "boost/thread/mutex.hpp"
+#include "boost/thread/thread.hpp"
+
 
  namespace mongo {
     
@@ -38,10 +41,11 @@
 	static BSONObj getMonitorResults();
 	static string getTarget();
 
-	void doPingForTarget();
-
+	static void doPingForTarget();
+	
     private:
 
+	static boost::mutex _mutex;
 	static BSONObj monitorResults;
 	static HostAndPort target; 
 	virtual void run();
