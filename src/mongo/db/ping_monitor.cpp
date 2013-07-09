@@ -34,34 +34,51 @@ namespace mongo {
 
     // PingMonitor
 
-    int PingMonitor::numTimes = 0;
-    int PingMonitor::getNumTimes(){ return numTimes; }
+    BSONObj PingMonitor::monitorResults;
+    BSONObj PingMonitor::getMonitorResults(){ return monitorResults; }
+ 
+    string defaultTarget = "localhost:27017";
 
-    void PingMonitor::doPingForHost( const string& hp ){
-	numTimes++;
+    HostAndPort PingMonitor::target(defaultTarget);
+
+    void PingMonitor::setTarget( HostAndPort newTarget ){ target = newTarget; }
+    string PingMonitor::getTarget(){ return target.toString(true); } 
+
+    void PingMonitor::doPingForTarget(){
+
+	BSONObjBuilder resultBuilder;
+	resultBuilder.append( "target" , target.toString(true) );
+
+	string connInfo;
+	DBClientConnection conn;
+	bool isConnected = conn.connect( target.toString(true) , connInfo ); 
+	
+	resultBuilder.append( "isConnected" , isConnected );
+
+	monitorResults = resultBuilder.obj();	  
+
     }
+
+
+
 
     void PingMonitor::run() {
 //	Client::initThread( name().c_str() );
    
 	while ( ! inShutdown() ) {
-
 	    sleepsecs( 2 );
 	    LOG(3) << "PingMonitor thread awake" << endl;
-
 	    if( false /*lockedForWriting()*/ ) {
 		// note: this is not perfect as you can go into fsync+lock between
 		// this and actually doing the delete later
 		LOG(3) << " locked for writing" << endl;
 		continue;
 	    }
-
 	    // if part of a replSet but not in a readable state ( e.g. during initial sync), skip
 	    //if ( theReplSet && !theReplSet->state().readable() )
 	    //    continue;
-
 	    //TODO: change this to defaulting to self; also to being settable
-	    doPingForHost( "localhost:30999" );
+	    doPingForTarget();
 	}
     }
 

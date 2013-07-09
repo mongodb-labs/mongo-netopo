@@ -5,8 +5,6 @@ history["stats"] = {};
 history["deltas"] =  {};
 
 /*stand-in names for strings used in output*/
-var allConn = "allConnections"; 
-var outConn = "outConnections";
 var shards = "shards";
 var mongos = "mongos";
 var config = "config";

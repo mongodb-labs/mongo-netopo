@@ -22,19 +22,34 @@
 
 #include "ping_monitor.h"
 #include "mongo/util/background.h"
+#include "mongo/util/net/hostandport.h"
 
  namespace mongo {
-       class PingMonitor : public BackgroundJob {
+    
+    class PingMonitor : public BackgroundJob {
+
     public:
         PingMonitor(){}
         virtual ~PingMonitor(){}
         virtual string name() const { return "PingMonitor"; }
-        static int getNumTimes();
-	void doPingForHost( const string& hp );
+
+	static void setTarget( HostAndPort newTarget );
+
+	static BSONObj getMonitorResults();
+	static string getTarget();
+
+	void doPingForTarget();
+
     private:
-        static int numTimes;
-        virtual void run();
+
+	static BSONObj monitorResults;
+	static HostAndPort target; 
+	virtual void run();
+
+
+
     };
+
  
     void startPingBackgroundJob();
 
