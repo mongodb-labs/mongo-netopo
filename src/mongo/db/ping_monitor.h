@@ -16,10 +16,28 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
- #pragma once
+#pragma once
+
+#include "pch.h"
+
+#include "ping_monitor.h"
+#include "mongo/util/background.h"
 
  namespace mongo {
-    
+       class PingMonitor : public BackgroundJob {
+    public:
+        PingMonitor(){}
+
+        virtual ~PingMonitor(){}
+        virtual string name() const { return "PingMonitor"; }
+        static int numTimes;
+        static int getNumTimes();
+	void doPingForHost( const string& hp );
+
+        virtual void run();
+    };
+ 
     void startPingBackgroundJob();
  
+
 }

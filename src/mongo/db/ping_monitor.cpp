@@ -32,46 +32,38 @@
 
 namespace mongo {
 
-    class PingMonitor : public BackgroundJob {
-    public:
-        PingMonitor(){}
-    
-        virtual ~PingMonitor(){}
-        virtual string name() const { return "PingMonitor"; }
-        static int numTimes;
-        void doPingForHost( const string& hp ){
-            numTimes++;
-        }
-
-	static int getNumTimes();  
- 
-        virtual void run() {
-            Client::initThread( name().c_str() );
-       
-	    while ( ! inShutdown() ) {
-
-                sleepsecs( 2 );
-                LOG(3) << "PingMonitor thread awake" << endl;
-
-                if( lockedForWriting() ) {
-                    // note: this is not perfect as you can go into fsync+lock between
-                    // this and actually doing the delete later
-                    LOG(3) << " locked for writing" << endl;
-                    continue;
-                }
-
-                // if part of a replSet but not in a readable state ( e.g. during initial sync), skip
-                //if ( theReplSet && !theReplSet->state().readable() )
-                //    continue;
-
-                doPingForHost( "localhost:30999" );
-            }
-        }
-
-    };
+    // PingMonitor
 
     int PingMonitor::numTimes = 0;
     int PingMonitor::getNumTimes(){ return numTimes; }
+
+    void PingMonitor::doPingForHost( const string& hp ){
+	numTimes++;
+    }
+
+    void PingMonitor::run() {
+	Client::initThread( name().c_str() );
+   
+	while ( ! inShutdown() ) {
+
+	    sleepsecs( 2 );
+	    LOG(3) << "PingMonitor thread awake" << endl;
+
+	    if( lockedForWriting() ) {
+		// note: this is not perfect as you can go into fsync+lock between
+		// this and actually doing the delete later
+		LOG(3) << " locked for writing" << endl;
+		continue;
+	    }
+
+	    // if part of a replSet but not in a readable state ( e.g. during initial sync), skip
+	    //if ( theReplSet && !theReplSet->state().readable() )
+	    //    continue;
+
+	    //TODO: change this to defaulting to self; also to being settable
+	    doPingForHost( "localhost:30999" );
+	}
+    }
 
     void startPingBackgroundJob() {
 	PingMonitor* pmt = new PingMonitor();

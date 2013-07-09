@@ -146,11 +146,11 @@ namespace mongo {
 					    std::vector<Privilege>* out) {} // No auth required
 
 	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-	   // result.append("output" , PingMonitor::getNumTimes( ));
+//	    result.append("output" , PingMonitor::getNumTimes( ));
 	    return true;
 	}
 
-    };
+    } pingMonitorCmd;
 
     class PingCommand : public Command {
     public:
