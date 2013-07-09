@@ -42,14 +42,14 @@ namespace mongo {
     }
 
     void PingMonitor::run() {
-	Client::initThread( name().c_str() );
+//	Client::initThread( name().c_str() );
    
 	while ( ! inShutdown() ) {
 
 	    sleepsecs( 2 );
 	    LOG(3) << "PingMonitor thread awake" << endl;
 
-	    if( lockedForWriting() ) {
+	    if( false /*lockedForWriting()*/ ) {
 		// note: this is not perfect as you can go into fsync+lock between
 		// this and actually doing the delete later
 		LOG(3) << " locked for writing" << endl;

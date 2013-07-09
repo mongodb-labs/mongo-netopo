@@ -202,7 +202,6 @@ commonFiles = [ "pch.cpp",
                 "util/text_startuptest.cpp",
                 "util/stack_introspect.cpp",
                 "util/net/sock.cpp",
-		"db/ping_monitor.cpp",
                 "util/net/ssl_manager.cpp",
                 "util/net/httpclient.cpp",
                 "util/net/message.cpp",
@@ -217,7 +216,8 @@ commonFiles = [ "pch.cpp",
                 "client/model.cpp",
                 'client/sasl_client_authenticate.cpp',
                 "client/syncclusterconnection.cpp",
-                "db/dbmessage.cpp"
+                "db/dbmessage.cpp",
+		"db/ping_monitor.cpp",
                 ]
 
 extraCommonLibdeps = []
