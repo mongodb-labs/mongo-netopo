@@ -55,6 +55,7 @@
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/stats/snapshots.h"
 #include "mongo/db/ttl.h"
+#include "mongo/db/ping_monitor.h"
 #include "mongo/platform/process_id.h"
 #include "mongo/s/d_writeback.h"
 #include "mongo/scripting/engine.h"
@@ -665,6 +666,8 @@ namespace mongo {
         else {
             startTTLBackgroundJob();
         }
+
+	startPingBackgroundJob();
 
 #ifndef _WIN32
         CmdLine::launchOk();

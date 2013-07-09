@@ -19,5 +19,7 @@
  #pragma once
 
  namespace mongo {
-     void startPingBackgroundJob();
- }
+    
+    void startPingBackgroundJob();
+ 
+}

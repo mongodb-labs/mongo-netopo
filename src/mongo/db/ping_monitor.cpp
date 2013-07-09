@@ -18,7 +18,7 @@
 
 #include "pch.h"
 
-#include "mongo/db/ttl.h"
+#include "ping_monitor.h"
 
 #include "mongo/base/counter.h"
 #include "mongo/db/commands/fsync.h"
@@ -29,55 +29,53 @@
 #include "mongo/db/repl/is_master.h"
 #include "mongo/util/background.h"
 
+
 namespace mongo {
 
     class PingMonitor : public BackgroundJob {
     public:
-	PingMonitor(){}
-	virtual ~PingMonitor(){}
+        PingMonitor(){}
+    
+        virtual ~PingMonitor(){}
+        virtual string name() const { return "PingMonitor"; }
+        static int numTimes;
+        void doPingForHost( const string& hp ){
+            numTimes++;
+        }
 
-	virtual string name() const { return "PingMonitor"; }
-
-	static int numTimes = 0;
-
-	void doPingForHost( const string& hp ){
-
-	    numTimes++;
-
-	}
-
-	virtual void run() {
-	    Client::initThread( name().c_str() );
-
+	static int getNumTimes();  
+ 
+        virtual void run() {
+            Client::initThread( name().c_str() );
+       
 	    while ( ! inShutdown() ) {
-		sleepsecs( 60 );
 
-		LOG(3) << "PingMonitor thread awake" << endl;
+                sleepsecs( 2 );
+                LOG(3) << "PingMonitor thread awake" << endl;
 
-		if( lockedForWriting() ) {
-		    // note: this is not perfect as you can go into fsync+lock between
-		    // this and actually doing the delete later
-		    LOG(3) << " locked for writing" << endl;
-		    continue;
-		}
-    	
-		/*
-		// if part of a replSet but not in a readable state ( e.g. during initial sync), skip
-		if ( theReplSet && !theReplSet->state().readable() )
-		    continue;
-		*/
+                if( lockedForWriting() ) {
+                    // note: this is not perfect as you can go into fsync+lock between
+                    // this and actually doing the delete later
+                    LOG(3) << " locked for writing" << endl;
+                    continue;
+                }
 
-		doPingForHost( "localhost:30999" );
+                // if part of a replSet but not in a readable state ( e.g. during initial sync), skip
+                //if ( theReplSet && !theReplSet->state().readable() )
+                //    continue;
 
-	    }
-	}
+                doPingForHost( "localhost:30999" );
+            }
+        }
 
     };
+
+    int PingMonitor::numTimes = 0;
+    int PingMonitor::getNumTimes(){ return numTimes; }
 
     void startPingBackgroundJob() {
 	PingMonitor* pmt = new PingMonitor();
 	pmt->go();
     }
 
-
-}
+} 

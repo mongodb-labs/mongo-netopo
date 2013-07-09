@@ -24,6 +24,7 @@
 #include "mongo/client/connpool.h"
 #include <sstream>
 #include "mongo/util/assert_util.h"
+#include "mongo/db/ping_monitor.h"
 
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/dbclient_rs.h"
@@ -134,11 +135,22 @@ namespace mongo {
 
     } cmdBuildInfo;
 
+    class PingMonitorCommand : public Command {
+    public:
+	PingMonitorCommand() : Command( "pingMonitor" ) {}
+	virtual bool slaveOk() const { return true; } //might want to make this false later
+	virtual void help( stringstream &help ) const { help << "display results from the background PingMonitor process" ; }
+	virtual LockType locktype() const { return NONE; }
+	virtual void addRequiredPrivileges( const std::string& dbname,
+					    const BSONObj& cmdObj,
+					    std::vector<Privilege>* out) {} // No auth required
 
+	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
+	   // result.append("output" , PingMonitor::getNumTimes( ));
+	    return true;
+	}
 
-
-
-
+    };
 
     class PingCommand : public Command {
     public:
