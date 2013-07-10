@@ -135,12 +135,12 @@ function pingCluster( host , verbosity ) {
     index = getShardServers( configDB , nodes , index , errors , warnings);
     index = getMongosServers( configDB , nodes , index , errors , warnings);
     index = getConfigServers( adminDB , nodes , index , errors , warnings);
+
     buildGraph( nodes , edges , errors , warnings );   
     buildIdMap( nodes , idMap );
     var diagnosis = diagnose( nodes , edges , errors , warnings );
 
-//    printjson(nodes);
-
+//    printjson(nodes); 
     var currDate = new Date();
     var currTime = currDate.toUTCString(); 
     saveSnapshot( currTime , nodes , edges , idMap , errors , warnings );
@@ -380,9 +380,7 @@ function getConfigServers( adminDB , nodes , index , errors , warnings ){
 	}
 	else
 	    addWarning( "cluster" , ERR["NO_CONFIG_SERVER_NOTED"] , warnings );
-    } catch(e) {
-
-    } 
+    } catch(e) {} 
         return index;
 }
 

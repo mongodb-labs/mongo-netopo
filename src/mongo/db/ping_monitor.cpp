@@ -37,7 +37,30 @@ namespace mongo {
     boost::mutex PingMonitor::_mutex;
 
     BSONObj PingMonitor::monitorResults;
-    BSONObj PingMonitor::getMonitorResults(){ return monitorResults; }
+
+    BSONObj PingMonitor::getMonitorResults(){ 
+	BSONObjBuilder show;
+	BSONObjBuilder nodeShow;
+//	BSONObjBuilder edgeShow;
+	
+	for (BSONObj::iterator i = monitorResults.getObjectField("nodes").begin(); i.more(); ){
+	    BSONElement nodeElem = i.next();
+	    BSONObj nodeObj = nodeElem.embeddedObject(); 
+	    BSONObjBuilder nodeData;
+	    nodeData.append( "hostName" , nodeObj["hostName"].valuestrsafe() );
+	    nodeData.append( "process" , nodeObj["process"].valuestrsafe() );
+	    nodeData.append( "role" , nodeObj.getObjectField("type").getStringField("role") );
+	    nodeData.append( "uptimeMillis" , nodeObj.getObjectField("serverStatus")["uptimeMillis"]._numberLong() );
+	    nodeShow.append( nodeElem.fieldName() , nodeData.obj() ); 
+	}
+	show.append( "edges" , monitorResults.getObjectField("edges") ); 
+	show.append( "nodes" , nodeShow.obj() ); 
+/*	for (BSONObj::iterator i = monitorResults.getObjectField("edges").begin(); i.more(); ){
+	    BSONElement nodeElem = i.next();
+//	    BSONObj nodeObj = nodeElem.embeddedObject();
+	}*/	
+	return show.obj(); 
+    }
  
     string defaultTarget = "localhost:27017";
 
@@ -241,19 +264,101 @@ namespace mongo {
 	    }
 	}
 	catch ( DBException& e ){};
-	return ++index;
+	return index;
     }
     int PingMonitor::getMongosServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
-
-	return ++index;
+	try{
+	    auto_ptr<DBClientCursor> cursor = conn.query("config.mongos" , BSONObj());
+	    while( cursor->more()){
+		BSONObj p = cursor->next();
+		string hostField = p.getStringField("_id");
+		int id = index;
+		index++;
+		BSONObjBuilder newHost;
+		newHost.append( "hostName" , hostField );
+		newHost.append( "machine" , "" );
+		newHost.append( "process" , "mongos" );
+		newHost.append( "key" , hostField + "_" + "" + "_" + "mongos" );
+		BSONObj type = BSON( "process" << "mongos" << "role" << "mongos" );
+		collectClientInfo( hostField , newHost , type , errors , warnings );
+		char idString[100];
+		sprintf(idString , "%d" , id);
+		nodes.append( idString , newHost.obj() );
+	    }
+	} catch( DBException& e) {} 
+	return index;
     }
-    int PingMonitor::getConfigServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
 
-	return ++index;
+    int PingMonitor::getConfigServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
+	BSONObj cmdReturned;
+	BSONObj getCmdLineOpts = BSON( "getCmdLineOpts" << 1 );
+	try{
+	    conn.runCommand( "admin" , getCmdLineOpts , cmdReturned );
+	    string host = cmdReturned["parsed"]["configdb"].valuestrsafe();
+	    int id = index;
+	    index++;
+	    BSONObjBuilder newHost;
+	    newHost.append( "hostName" , host );
+	    newHost.append( "machine" , "" );
+	    newHost.append( "process" , "mongod");
+	    newHost.append( "key" , host + "_" + "" + "_" + "mongod" );
+	    BSONObj type = BSON( "process" << "mongod" << "role" << "config" );
+	    collectClientInfo( host , newHost , type , errors , warnings );
+	    char idString[100];
+	    sprintf(idString, "%d", id);
+	    nodes.append( idString, newHost.obj() ); 
+	} catch( DBException& e ){}
+	return index;
     }
 
     void PingMonitor::buildGraph( BSONObj& nodes , BSONObjBuilder& edges , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
-
+	for (BSONObj::iterator srcNode = nodes.begin(); srcNode.more(); ){
+	    BSONElement srcElem = srcNode.next();
+	    BSONObj srcObj = srcElem.embeddedObject();
+	    string srcHostName = srcObj.getStringField("hostName"); 
+	    BSONObjBuilder srcEdges;
+	    for( BSONObj::iterator tgtNode = nodes.begin(); tgtNode.more(); ){
+		BSONElement tgtElem = tgtNode.next();
+		BSONObj tgtObj = srcElem.embeddedObject();
+		string tgtHostName = tgtObj.getStringField("hostName"); 
+		BSONObjBuilder newEdge;
+		DBClientConnection conn;
+		string connInfo;
+		bool clientIsConnected;
+		try{ clientIsConnected = conn.connect( srcHostName , connInfo ); }
+		catch ( DBException& e ){ continue; } //TODO: better exception handling
+		if( clientIsConnected ){
+		    try{
+			BSONObj hostArray = BSON( "0" << tgtHostName );
+			BSONObjBuilder pingCmd;
+			pingCmd.append("ping" , 1 );
+			pingCmd.appendArray("hosts" , hostArray);		
+			BSONObj cmdReturned;	
+			conn.runCommand( "admin" , pingCmd.obj() , cmdReturned );
+			BSONObj edgeInfo = cmdReturned.getObjectField( tgtHostName );
+			if( edgeInfo["isConnected"].boolean() == false ){
+			    newEdge.append( "isConnected" , false );
+			    newEdge.append( "errmsg" , edgeInfo["errmsg"].valuestrsafe() );
+			}
+			else{
+			    newEdge.append( "isConnected" , true );
+			    newEdge.append( "pingTimeMicrosecs" , edgeInfo["pingTimeMicrosecs"].number() );
+			}
+			newEdge.append( "bytesSent" , edgeInfo["bytesSent"]._numberLong() );
+			newEdge.append( "bytesReceived" , edgeInfo["bytesReceived"]._numberLong() );
+			newEdge.append( "incomingSocketExceptions" , edgeInfo["incomingSocketExceptions"]._numberLong() );
+			newEdge.append( "outgoingSocketExceptions" , edgeInfo["outgoingSocketExceptions"]._numberLong() );
+			srcEdges.append( tgtElem.fieldName() , newEdge.obj() );  
+		    }
+		    catch( DBException& e) {
+			newEdge.append( "isConnected" , "false" );
+			newEdge.append( "errmsg" , " " );
+		    } 
+		}
+		else{ }//should be caught by exception handler? 
+	    }
+	    edges.append( srcElem.fieldName() , srcEdges.obj() );
+	}
     }
 
     void PingMonitor::buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap ){
@@ -268,7 +373,6 @@ namespace mongo {
 //	Client::initThread( name().c_str() );
    
 	while ( ! inShutdown() ) {
-	    sleepsecs( 2 );
 	    LOG(3) << "PingMonitor thread awake" << endl;
 	    if( false /*lockedForWriting()*/ ) {
 		// note: this is not perfect as you can go into fsync+lock between
@@ -281,6 +385,7 @@ namespace mongo {
 	    //    continue;
 	    //TODO: change this to defaulting to self; also to being settable
 	    doPingForTarget();
+    	    sleepsecs( 15 );
 	}
     }
 
