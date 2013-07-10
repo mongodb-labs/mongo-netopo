@@ -229,7 +229,7 @@ namespace mongo {
 				    break; //no socket exception, so do not retry
 			}
 		    }
-		    catch (const SocketException&) {
+		    catch (const SocketException& e) {
 			numSocketExceptions++; 
 			continue; // try again
 		    }   

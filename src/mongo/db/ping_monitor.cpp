@@ -55,22 +55,77 @@ namespace mongo {
     string PingMonitor::getTarget(){ return target.toString(true); } 
 
     void PingMonitor::doPingForTarget(){
-
 	BSONObjBuilder resultBuilder;
 	resultBuilder.append( "target" , target.toString(true) );
-
+	const string adminDB = "admin";
 	string connInfo;
 	DBClientConnection conn;
-	bool isConnected = conn.connect( target.toString(true) , connInfo ); 
-	
-	resultBuilder.append( "isConnected" , isConnected );
+	bool isConnected;
+	try{ isConnected = conn.connect( target.toString(true) , connInfo );}
+	catch( SocketException& e){ 
+	    resultBuilder.append("errmsg" , connInfo);
+	    monitorResults = resultBuilder.obj();
+	    return; 
+	} 
+	if( isConnected == false ){
+	    resultBuilder.append("errmsg" , connInfo);
+	    monitorResults = resultBuilder.obj();
+	    return; 
+	}
+
+	BSONObjBuilder nodesBuilder, edgesBuilder, idMapBuilder, errorsBuilder, warningsBuilder;
+	BSONObj nodes, edges, idMap, errors, warnings;
+	int index = 0;
+
+	index = getShardServers( conn , nodesBuilder , index , errorsBuilder , warningsBuilder );
+	index = getMongosServers( conn , nodesBuilder , index , errorsBuilder , warningsBuilder );
+	index = getConfigServers( conn , nodesBuilder , index , errorsBuilder , warningsBuilder );
+	nodes = nodesBuilder.obj();
+
+	buildGraph( nodes , edgesBuilder , errorsBuilder , warningsBuilder );
+	edges = edgesBuilder.obj();
+
+	buildIdMap( nodes , idMapBuilder );
+	idMap = idMapBuilder.obj();
+
+	diagnose( nodes , edges , errorsBuilder , warningsBuilder );
+	errors = errorsBuilder.obj();
+	warnings = warningsBuilder.obj();
+
+	resultBuilder.append("nodes" , nodes);   
+	resultBuilder.append("edges" , edges);
+	resultBuilder.append("idMap" , idMap);
+	resultBuilder.append("errors" , errors);
+	resultBuilder.append("warnings" , warnings); 
 
 	monitorResults = resultBuilder.obj();	  
 
     }
 
+    int PingMonitor::getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
 
+	return ++index;
+    }
+    int PingMonitor::getMongosServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
 
+	return ++index;
+    }
+    int PingMonitor::getConfigServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
+
+	return ++index;
+    }
+
+    void PingMonitor::buildGraph( BSONObj& nodes , BSONObjBuilder& edges , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
+
+    }
+
+    void PingMonitor::buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap ){
+
+    }
+
+    void PingMonitor::diagnose( BSONObj& nodes , BSONObj& edges , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
+
+    }
 
     void PingMonitor::run() {
 //	Client::initThread( name().c_str() );

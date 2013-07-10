@@ -25,7 +25,7 @@
 #include "mongo/util/net/hostandport.h"
 #include "boost/thread/mutex.hpp"
 #include "boost/thread/thread.hpp"
-
+#include "mongo/client/dbclientinterface.h"
 
  namespace mongo {
     
@@ -40,21 +40,32 @@
 
 	static BSONObj getMonitorResults();
 	static string getTarget();
-
-	static void doPingForTarget();
 	
     private:
 
+	static void doPingForTarget();
 	static boost::mutex _mutex;
 	static BSONObj monitorResults;
 	static HostAndPort target; 
 	virtual void run();
 
+	static int getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings );
+	static int getMongosServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings );
+	static int getConfigServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings );
 
+	static void buildGraph( BSONObj& nodes , BSONObjBuilder& edges , BSONObjBuilder& errors , BSONObjBuilder& warnings );
+	
+	static void buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap );
+
+	static void diagnose( BSONObj& nodes , BSONObj& edges , BSONObjBuilder& errors , BSONObjBuilder& warnings );
 
     };
 
  
     void startPingBackgroundJob();
+
+
+
+
 
 }
