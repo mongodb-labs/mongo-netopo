@@ -423,8 +423,8 @@ function getShardServers( configDB , nodes , index , errors , warnings ){
 		nodes[id]["hostName"] = hosts[i];
 		nodes[id]["machine"] = ""; //to be expanded later
 		nodes[id]["process"] = "mongod";
-		nodes[id]["errors"] = new Array();
-		nodes[id]["warnings"] = new Array();
+//		nodes[id]["errors"] = new Array();
+//		nodes[id]["warnings"] = new Array();
 		nodes[id]["shardName"] = shardName;
 		nodes[id]["key"] = nodes[id]["hostName"] 
 				    + "_" + nodes[id]["machine"]

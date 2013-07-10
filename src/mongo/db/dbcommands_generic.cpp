@@ -182,7 +182,7 @@ namespace mongo {
 	    //result.appendDate( "currentTime" , jsTime() );
 
 	    vector<BSONElement> v = cmdObj.getField("hosts").Array();
-	    BSONObj outCommand = BSON("ping" << 1 << "deep" << 0);
+	    BSONObj outCommand = BSON("ping" << 1);
 	    string db = "admin";
     
 	    //for each host:port in the array
@@ -208,7 +208,7 @@ namespace mongo {
 			    //time a ping	
 			    using namespace boost::posix_time;
 			    ptime time_start(microsec_clock::local_time());	
-			    dbc.runCommand(db, outCommand, pingInfo);
+			    /**/dbc.runCommand(db, outCommand, pingInfo);
 			    ptime time_end(microsec_clock::local_time());
 			    time_duration duration(time_end - time_start);
 			    std::stringstream strstream;

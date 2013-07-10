@@ -28,7 +28,7 @@
 #include "mongo/db/ops/delete.h"
 #include "mongo/db/repl/is_master.h"
 #include "mongo/util/background.h"
-
+#include <boost/tokenizer.hpp>
 
 namespace mongo {
 
@@ -97,13 +97,150 @@ namespace mongo {
 	resultBuilder.append("idMap" , idMap);
 	resultBuilder.append("errors" , errors);
 	resultBuilder.append("warnings" , warnings); 
-
+	resultBuilder.append("currentTime" , jsTime() );
 	monitorResults = resultBuilder.obj();	  
 
     }
 
-    int PingMonitor::getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
+    void collectClientInfo( string host , BSONObjBuilder& newHost , BSONObj& type , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
+	DBClientConnection conn;
+	string connInfo;
+	bool isConnected;
+	try{ isConnected = conn.connect( host , connInfo );}
+	catch(SocketException& e){ return; }
+	if( isConnected == false ){ return; }
 
+	/*TODO: could push all these commands into a vector and simply loop over the vector*/
+	BSONObj hostInfoCmd = BSON( "hostInfo" << 1 );
+	BSONObj serverStatusCmd = BSON( "serverStatus" << 1 );
+	BSONObj buildInfoCmd = BSON( "buildInfo" << 1 );
+	BSONObj isMasterCmd = BSON( "isMaster" << 1 );
+	BSONObj getShardVersionCmd = BSON( "getShardVersion" << 1 );
+	BSONObj hostInfoReturned, serverStatusReturned, buildInfoReturned, isMasterReturned, getShardVersionReturned;
+
+	//all nodes collect the following
+	try{
+	    conn.runCommand( "admin" , hostInfoCmd , hostInfoReturned ); 
+	    newHost.append( "hostInfo" , hostInfoReturned );
+	}
+	catch( DBException& e){
+	    newHost.append( "hostInfo" , e.toString() );
+	}
+
+	try{
+	    conn.runCommand( "admin" , serverStatusCmd , serverStatusReturned );
+	    newHost.append( "serverStatus" , serverStatusReturned );
+	}
+	catch ( DBException& e ){
+	    newHost.append( "serverStatus" , e.toString() );
+	} 
+
+	try{
+	    conn.runCommand( "admin" , getShardVersionCmd , getShardVersionReturned );
+	    newHost.append( "shardVersion" , getShardVersionReturned );
+	}	
+	catch ( DBException& e ){
+	    newHost.append( "shardVersion" , e.toString() );
+	}
+
+	// only mongod instances collect the following
+	string mongod = "mongod";
+	if( mongod.compare(type.getStringField("process")) == 0 ){	
+	    try{
+		conn.runCommand( "admin" , buildInfoCmd , buildInfoReturned );
+		newHost.append( "buildInfo" , buildInfoReturned );
+	    }
+	    catch ( DBException& e ){
+		newHost.append( "buildInfo" , e.toString() );
+	    }
+	}
+
+	string primary = "primary";
+	string secondary = "secondary";
+	// only shard mongod instances collect the following
+	if ( primary.compare(type.getStringField("role")) == 0 || secondary.compare(type.getStringField("role")) == 0 ){
+	    try{
+		conn.runCommand( "admin" , isMasterCmd , isMasterReturned );
+		newHost.append( "isMaster" , isMasterReturned );
+	    }
+	    catch ( DBException& e) {
+		newHost.append( "isMaster" , e.toString() );
+	    }
+	}
+    }
+
+    int PingMonitor::getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
+	try{
+	    auto_ptr<DBClientCursor> cursor = conn.query("config.shards" , BSONObj());
+	    while( cursor->more()){
+		BSONObj p = cursor->next();
+		string hostField = p.getStringField("host");
+		string::size_type startPos = hostField.find("/");
+		if( startPos != string::npos ){
+		    string shardName = hostField.substr(0, startPos); 
+		    string memberHosts = hostField.substr(startPos + 1);
+		    string delimiter = ",";
+		    int count = 0;
+		    size_t currPos = 0;
+		    string currToken;	
+		    while( (currPos = memberHosts.find(delimiter)) != string::npos ){
+			currToken = memberHosts.substr(0 , currPos);
+			int id = index;
+			index++;
+			BSONObjBuilder newHost;
+			newHost.append( "hostName" , currToken );
+			newHost.append( "machine" , "" );
+			newHost.append( "process" , "mongod" );
+			newHost.append( "shardName" , shardName );
+			newHost.append( "key" , currToken + "_" + "" + "_" + "mongod" );
+			BSONObj type;	
+			if( count == 0 ){
+			    newHost.append("role" , "primary" );
+			    type = BSON( "process" << "mongod" << "role" << "primary" );
+			}
+			else{
+			    newHost.append("role" , "secondary" );
+			    type = BSON( "process" << "mongod" << "role" << "secondary" );
+			}	
+			collectClientInfo( currToken , newHost , type , errors , warnings );
+			char idString[100];
+			sprintf(idString , "%d" , id);
+			nodes.append( idString , newHost.obj() );
+			memberHosts.erase(0, currPos + delimiter.length());
+			count++; 
+		    }			
+		    int id = index;
+		    index++;
+		    BSONObjBuilder newHost;
+		    newHost.append( "hostName" , currToken );
+		    newHost.append( "machine" , "" );
+		    newHost.append( "process" , "mongod" );
+		    newHost.append( "shardName" , shardName );
+		    newHost.append( "key" , currToken + "_" + "" + "_" + "mongod" );
+		    BSONObj type = BSON( "process" << "mongod" << "role" << "secondary" );
+		    collectClientInfo( currToken , newHost , type , errors , warnings );
+		    char idString[100];
+		    sprintf(idString , "%d" , id);
+		    nodes.append( idString , newHost.obj() );
+
+		}
+		else{
+		    int id = index;
+		    index++;
+		    BSONObjBuilder newHost;
+		    newHost.append( "hostName" , p.getStringField("host") );
+		    newHost.append( "machine" , "" );
+		    newHost.append( "process" , "mongod" );
+		    newHost.append( "key" , hostField + "_" + "" + "_" + "mongod" );
+		    BSONObj type = BSON( "process" << "mongod" << "role" << "primary" );
+		    collectClientInfo( p.getStringField("host") , newHost , type , errors , warnings );
+		    char idString[100];
+		    sprintf(idString , "%d" , id);
+		    nodes.append( idString , newHost.obj() );
+		} 
+	    }
+	}
+	catch ( DBException& e ){};
 	return ++index;
     }
     int PingMonitor::getMongosServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
