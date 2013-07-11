@@ -48,6 +48,11 @@
 	static BSONObj monitorResults;
 	static HostAndPort target; 
 	virtual void run();
+	static BSONObj reqConnChart;
+	static BSONObj recConnChart;
+	static void initializeCharts();
+	static void addError(const string& key , const string& err , BSONObjBuilder& errors);
+	static void addWarning(const string& key , const string& warning , BSONObjBuilder& warnings);
 
 	static int getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings );
 	static int getMongosServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings );

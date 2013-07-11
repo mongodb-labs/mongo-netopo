@@ -37,6 +37,8 @@ namespace mongo {
     boost::mutex PingMonitor::_mutex;
 
     BSONObj PingMonitor::monitorResults;
+    BSONObj PingMonitor::reqConnChart;
+    BSONObj PingMonitor::recConnChart;
 
     BSONObj PingMonitor::getMonitorResults(){ 
 	BSONObjBuilder show;
@@ -49,12 +51,13 @@ namespace mongo {
 	    BSONObjBuilder nodeData;
 	    nodeData.append( "hostName" , nodeObj["hostName"].valuestrsafe() );
 	    nodeData.append( "process" , nodeObj["process"].valuestrsafe() );
-	    nodeData.append( "role" , nodeObj.getObjectField("type").getStringField("role") );
+	    nodeData.append( "role" , nodeObj.getObjectField("type")["role"].valuestr() );
 	    nodeData.append( "uptimeMillis" , nodeObj.getObjectField("serverStatus")["uptimeMillis"]._numberLong() );
 	    nodeShow.append( nodeElem.fieldName() , nodeData.obj() ); 
 	}
-	show.append( "edges" , monitorResults.getObjectField("edges") ); 
-	show.append( "nodes" , nodeShow.obj() ); 
+	
+    	show.append( "edges" , monitorResults.getObjectField("edges") ); 
+	show.append( "nodes" , nodeShow.obj() );
 /*	for (BSONObj::iterator i = monitorResults.getObjectField("edges").begin(); i.more(); ){
 	    BSONElement nodeElem = i.next();
 //	    BSONObj nodeObj = nodeElem.embeddedObject();
@@ -217,14 +220,10 @@ namespace mongo {
 			newHost.append( "shardName" , shardName );
 			newHost.append( "key" , currToken + "_" + "" + "_" + "mongod" );
 			BSONObj type;	
-			if( count == 0 ){
-			    newHost.append("role" , "primary" );
+			if( count == 0 )
 			    type = BSON( "process" << "mongod" << "role" << "primary" );
-			}
-			else{
-			    newHost.append("role" , "secondary" );
+			else
 			    type = BSON( "process" << "mongod" << "role" << "secondary" );
-			}	
 			collectClientInfo( currToken , newHost , type , errors , warnings );
 			char idString[100];
 			sprintf(idString , "%d" , id);
@@ -365,7 +364,68 @@ namespace mongo {
 
     }
 
+    void PingMonitor::initializeCharts(){
+	BSONObjBuilder req;
+	BSONObj req_mongos = BSONObjBuilder().append("mongos",false ).append("config",true).append("primary",true).append("secondary",false).obj();
+	BSONObj req_config = BSONObjBuilder().append("mongos",true ).append("config",true).append("primary",true).append("secondary",false).obj();
+	BSONObj req_primary = BSONObjBuilder().append("mongos",true ).append("config",true).append("primary",true).append("secondary",false).obj();
+	BSONObj req_secondary = BSONObjBuilder().append("mongos",false ).append("config",false).append("primary",false).append("secondary",false).obj();
+	req.append("mongos", req_mongos);
+	req.append("config", req_config);
+	req.append("primary", req_primary);
+	req.append("secondary", req_secondary);
+	reqConnChart = req.obj();
+
+	BSONObjBuilder rec;
+	BSONObj rec_mongos = BSONObjBuilder().append("mongos",false ).append("config",false).append("primary",false).append("secondary",true).obj();
+	BSONObj rec_config = BSONObjBuilder().append("mongos",false ).append("config",false).append("primary",false).append("secondary",true).obj();
+	BSONObj rec_primary = BSONObjBuilder().append("mongos",false ).append("config",false).append("primary",false).append("secondary",true).obj();
+	BSONObj rec_secondary = BSONObjBuilder().append("mongos",true ).append("config",true).append("primary",true).append("secondary",true).obj();
+	rec.append("mongos", rec_mongos);
+	rec.append("config", rec_config);
+	rec.append("primary", rec_primary);
+	rec.append("secondary", rec_secondary);
+	recConnChart = rec.obj();
+    } 
+  
+    //TODO 
+    bool isReqConn( const string& src , const string& tgt){
+	return true;
+    }
+
+    //TODO
+    bool isRecConn( const string& src , const string& tgt ){
+	return true;
+    }
+
+    //TODO
+    void PingMonitor::addError( const string& key , const string& err , BSONObjBuilder& errors){
+
+    }
+
+    //TODO
+    void PingMonitor::addWarning(const string& key , const string& err , BSONObjBuilder& warnings){
+
+    }
+ 
     void PingMonitor::diagnose( BSONObj& nodes , BSONObj& edges , BSONObjBuilder& errors , BSONObjBuilder& warnings ){
+	for (BSONObj::iterator srcNode = nodes.begin(); srcNode.more(); ){
+	    BSONElement srcElem = srcNode.next();
+	    BSONObj srcObj = srcElem.embeddedObject();
+	    for( BSONObj::iterator tgtNode = nodes.begin(); tgtNode.more(); ){
+		BSONElement tgtElem = tgtNode.next();
+		BSONObj tgtObj = srcElem.embeddedObject();
+		BSONObj currEdge = edges.getObjectField( srcElem.fieldName() ).getObjectField( tgtElem.fieldName() );
+		if( currEdge["isConnected"].boolean() == false){
+		    if( isReqConn( srcObj[ "hostName" ].valuestrsafe() , tgtObj[ "hostName" ].valuestrsafe() ) ) 
+			addError( srcObj[ "key" ].valuestrsafe() , /*TODO*/ "I'm an error" , errors );	
+		    if( isRecConn( srcObj[ "hostName" ].valuestrsafe() , tgtObj[ "hostName" ].valuestrsafe() ) ) 
+			addWarning( srcObj[ "key" ].valuestrsafe(), /*TODO*/"I'm a warning" , warnings );	
+		}
+	    }
+	}
+
+
 
     }
 
