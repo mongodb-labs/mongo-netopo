@@ -213,8 +213,8 @@ namespace mongo {
 			    time_duration duration(time_end - time_start);
 			    std::stringstream strstream;
 			    strstream << duration.total_microseconds();
-			    currServer.append("pingTimeMicrosecs", strstream.str()); 
-			   
+			   // currServer.append("pingTimeMicrosecs", strstream.str()); 
+			    currServer.append("pingTimeMicrosecs" , duration.total_microseconds() ); 
 			    //append message returned from the shallow ping  if more than { "ok : 1 } 
 			    if(pingInfo.toString().size() > 11) 
 				currServer.append("pingInfo", pingInfo);

@@ -46,31 +46,34 @@
 	static void doPingForTarget();
 	static boost::mutex _mutex;
 	static BSONObj monitorResults;
-	static HostAndPort target; 
+	static HostAndPort target;
+	static bool targetSet; 
+	static void turnOffMonitoring();
+
 	virtual void run();
+
 	static BSONObj reqConnChart;
 	static BSONObj recConnChart;
 	static void initializeCharts();
-	static void addError(const string& key , const string& err , BSONObjBuilder& errors);
-	static void addWarning(const string& key , const string& warning , BSONObjBuilder& warnings);
+	static void addError(const string& key , const string& err , map<string, vector<string> >& errors);
+	static void addWarning(const string& key , const string& warning , map<string, vector<string> >& warnings);
 
-	static int getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings );
-	static int getMongosServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings );
-	static int getConfigServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , BSONObjBuilder& errors , BSONObjBuilder& warnings );
+	static int getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	static int getMongosServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	static int getConfigServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 
-	static void buildGraph( BSONObj& nodes , BSONObjBuilder& edges , BSONObjBuilder& errors , BSONObjBuilder& warnings );
+	static void buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 	
 	static void buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap );
 
-	static void diagnose( BSONObj& nodes , BSONObj& edges , BSONObjBuilder& errors , BSONObjBuilder& warnings );
+	static void diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 
+	static bool isReqConn( const string& src , const string& tgt);
+	static bool isRecConn( const string& src , const string& tgt);
+	friend void startPingBackgroundJob();
     };
 
- 
     void startPingBackgroundJob();
-
-
-
-
-
+    
+    BSONObj convertToBSON( map< string , vector<string> >& m ); 
 }
