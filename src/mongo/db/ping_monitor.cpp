@@ -36,38 +36,151 @@ namespace mongo {
 
     boost::mutex PingMonitor::_mutex;
 
-    map< string , string> PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
+    bool PingMonitor::isMonitoring = false;
+    bool PingMonitor::targetIsSet = false;
 
+    BSONObj PingMonitor::reqConnChart;
+    BSONObj PingMonitor::recConnChart;
+ 
+
+    // Error codes
+
+    map< string , string> PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
     map<string,string> PingMonitor::initializeErrcodes(){
 	map<string,string> m;
 	m["MISSING_REQ_CONN"] = "Missing required connection to ";
 	m["MISSING_REC_CONN"] = "Missing recommended connection to ";
-
 	return m;
     };
 
+    
+    // Commands for getting and setting target
 
-    bool PingMonitor::targetSet = false;
     HostAndPort PingMonitor::target;
+    string PingMonitor::targetNetworkType;
+
     string PingMonitor::getTarget(){
-	if( targetSet )
+	if( targetIsSet )
 	    return target.toString(true); 
 	else
 	    return NULL;
     } 
-    void PingMonitor::setTarget( HostAndPort newTarget ){
-	target = newTarget;
-	targetSet = true;
-	// run one ping right now with the updated target so the user gets results from the
-	// expected target; otherwise would be more likely that the last pinged target would
-	// still be stored in monitorResults and those outdated results would be returned
-	// to the user
-	doPingForTarget();	
+
+    bool PingMonitor::setTarget( HostAndPort hp ){
+	BSONObj connStatus = canConnect( hp );
+	if( connStatus["isConnected"].boolean() ){
+	    targetNetworkType = connStatus["networkType"].valuestrsafe();
+    	    if( targetNetworkType != NULL ){
+		target = hp;
+		targetIsSet = true;
+		return true;
+	    }
+	    else{
+		//TODO, target is not replset primary or mongos
+	    }
+	}
+	else{
+	    //TODO, can't make client connection to requested target
+	    // connStatus["connectionMsg"] contains message from connect()
+	}
+	return false;	    
     }
 
-    void PingMonitor::turnOffMonitoring(){
-	targetSet = false;
+    string PingMonitor::getTargetNetworkType(){
+	if( targetIsSet )
+	    return targetNetworkType;
+	else
+	    return NULL;
     }
+
+
+    // Monitoring commands
+
+    bool PingMonitor::getIsMonitoring(){
+	return isMonitoring;
+    } 
+
+    // stops monitoring process but does not reset target or clear monitoring history
+    bool PingMonitor::turnOffMonitoring(){
+	isMonitoring = false;
+	return true;
+    }
+
+    // turns on monitoring process if target had been previously set 
+    bool PingMonitor::turnOnMonitoring(){
+	if( targetIsSet ){
+	    isMonitoring = true;
+	    doPingForTarget();
+	    return true;
+	}
+	return false;
+    }
+
+    // sets target to new target and turns on monitoring process if was off before
+    // if new target is invalid, continues doing what we were doing before
+	// if had been monitoring with previous target, keep doing that
+	// if had not been monitoring, remain that way
+    bool PingMonitor::switchMonitoringTarget( HostAndPort hp ){
+	if( setTarget( hp ) ){
+	    turnOnMonitoring();
+	    return true;
+	}
+	return false;
+    }
+
+    void PingMonitor::clearMonitoringHistory(){
+	//TODO
+    }
+
+    
+    // Checking client connection commands
+
+    // returns two fields: whether this process can make a client connection to
+    // the target, and the connection message from the connect() command
+    BSONObj PingMonitor::canConnect( HostAndPort hp ){
+	BSONObjBuilder toReturn;
+	DBClientConnection conn;
+	string connInfo;
+	bool isConnected;
+	try{ 
+	    isConnected = conn.connect( hp.toString(true) , connInfo );
+	    toReturn.append("isConnected" , isConnected );
+	    toReturn.append("connInfo" , connInfo);
+	    toReturn.append("networkType" , determineTargetNetworkType( conn ) );
+	}
+	catch( DBException& e){ 
+	    toReturn.append("isConnected" , false );
+	    toReturn.append("connInfo" , connInfo);
+	} 
+	return toReturn.obj();
+    }
+
+    // returns the network type of the target; or null if unable to determine network type 
+    // basically...
+    // returns "sharded_cluster" if target is a mongos
+    // returns "replica_set" if target is a primary in a replica set or a master in a master-slave relationshipt
+    // returns NULL if target is a standalone mongod, secondary, or slave
+    // returns NULL if unable to determine network type ( catches DBException )
+    string PingMonitor::determineTargetNetworkType( DBClientConnection& conn ){
+	BSONObj isMasterCmd = BSON( "isMaster" << 1 );
+	BSONObj cmdReturned;
+	string isdbgrid = "isdbgrid";
+	try{
+	    conn.runCommand( "admin" , isMasterCmd , cmdReturned );
+	    if( cmdReturned["isMaster"].valuestrsafe() == false )
+		return NULL;  
+	    if( cmdReturned["msg"].trueValue() && isdbgrid.compare(cmdReturned["msg"].valuestrsafe()) )
+		return "sharded_cluster";
+	    if( cmdReturned["setName"].trueValue() )
+		return "replica_set";	
+	}
+	catch( DBException& e){
+	    return NULL;
+	}
+	return NULL;
+    }
+
+
     BSONObj PingMonitor::monitorResults;
     BSONObj PingMonitor::getMonitorResults(){ 
 	BSONObjBuilder show;
@@ -78,12 +191,13 @@ namespace mongo {
 	    BSONObj nodeObj = nodeElem.embeddedObject(); 
 	    BSONObjBuilder nodeData;
 	    nodeData.append( "hostName" , nodeObj["hostName"].valuestrsafe() );
-//	    nodeData.append( "process" , nodeObj["process"].valuestrsafe() );
+	    nodeData.append( "process" , nodeObj["process"].valuestrsafe() );
 	    nodeData.append( "role" , (nodeObj.getObjectField("type"))["role"].valuestrsafe() );
 	    nodeData.append( "uptimeMillis" , nodeObj.getObjectField("serverStatus")["uptimeMillis"]._numberLong() );
-	    nodeData.append( "key" , nodeObj["key"].valuestrsafe() );
+//	    nodeData.append( "key" , nodeObj["key"].valuestrsafe() );
+//	    nodeData.append( "serverStatus" , nodeObj.getObjectField("serverStatus").toString() );
+
 	    nodeShow.append( nodeElem.fieldName() , nodeData.obj() ); 
-//	    nodeShow.append( nodeElem.fieldName() , nodeObj["hostName"].valuestrsafe() );
 	}
 
 	for (BSONObj::iterator i = monitorResults.getObjectField("edges").begin(); i.more(); ){
@@ -102,7 +216,7 @@ namespace mongo {
  
 //    	show.append( "edges_full" , monitorResults.getObjectField("edges") ); 
 //	show.append( "nodes_full" , monitorResults.getObjectField("nodes") );
-//	show.append( "edges" , edgeShow.obj() );
+	show.append( "edges" , edgeShow.obj() );
 	show.append( "nodes" , nodeShow.obj() );
 
 	show.append( "errors" , monitorResults.getObjectField("errors") );
@@ -110,31 +224,29 @@ namespace mongo {
 	return show.obj(); 
     }
     
-    BSONObj PingMonitor::reqConnChart;
-    BSONObj PingMonitor::recConnChart;
- 
-    void PingMonitor::doPingForTarget(){
 
-	if( targetSet == false )
+    void PingMonitor::doPingForTarget(){
+	if( isMonitoring == false )
 	    return;
+	//TODO
+    	DBClientConnection conn;
+	string connInfo;
+	bool isConnected;
+	isConnected = conn.connect( target , connInfo );
+	if( targetNetworkType == "replica_set" )
+	    doPingForReplset( conn );
+	else if( targetNetworkType == "sharded_cluster" )
+	    doPingForCluster( conn );
+    }
+
+    void PingMonitor::doPingForReplset( DBClientConnection& conn ){
+	//TODO
+    }
+
+    void PingMonitor::doPingForCluster( DBClientConnection& conn ){
 
 	BSONObjBuilder resultBuilder;
 	resultBuilder.append( "target" , target.toString(true) );
-	const string adminDB = "admin";
-	string connInfo;
-	DBClientConnection conn;
-	bool isConnected;
-	try{ isConnected = conn.connect( target.toString(true) , connInfo );}
-	catch( DBException& e){ 
-	    resultBuilder.append("errmsg" , connInfo);
-	    monitorResults = resultBuilder.obj();
-	    return; 
-	} 
-	if( isConnected == false ){
-	    resultBuilder.append("errmsg" , connInfo);
-	    monitorResults = resultBuilder.obj();
-	    return; 
-	}
 
 	BSONObjBuilder nodesBuilder, edgesBuilder, idMapBuilder;
 	BSONObj nodes, edges, idMap, errors, warnings;
@@ -172,11 +284,20 @@ namespace mongo {
 	    BSONArrayBuilder aBuilder;
 	    for( vector<string>::iterator vecItr = mapItr->second.begin(); vecItr!=mapItr->second.end(); vecItr++){
 		aBuilder.append( *vecItr );	
-
 	    }
 	   b.append( mapItr->first , aBuilder.arr() ); 
 	} 
 	return b.obj();
+    }
+
+    void collect( DBClientConnection& conn , const string& db , BSONObjBuilder& newHost , BSONObj& cmd , BSONObj cmdReturned , const string& title ){
+	try{
+	    conn.runCommand( db , cmd , cmdReturned ); 
+	    newHost.append( title , cmdReturned );
+	}
+	catch( DBException& e){
+	    newHost.append( title , e.toString() );
+	}
     }
 
     void collectClientInfo( string host , BSONObjBuilder& newHost , BSONObj& type , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
@@ -187,7 +308,6 @@ namespace mongo {
 	catch(SocketException& e){ return; }
 	if( isConnected == false ){ return; }
 
-	/*TODO: could push all these commands into a vector and simply loop over the vector*/
 	BSONObj hostInfoCmd = BSON( "hostInfo" << 1 );
 	BSONObj serverStatusCmd = BSON( "serverStatus" << 1 );
 	BSONObj buildInfoCmd = BSON( "buildInfo" << 1 );
@@ -196,55 +316,22 @@ namespace mongo {
 	BSONObj hostInfoReturned, serverStatusReturned, buildInfoReturned, isMasterReturned, getShardVersionReturned;
 
 	//all nodes collect the following
-	try{
-	    conn.runCommand( "admin" , hostInfoCmd , hostInfoReturned ); 
-	    newHost.append( "hostInfo" , hostInfoReturned );
-	}
-	catch( DBException& e){
-	    newHost.append( "hostInfo" , e.toString() );
-	}
-
-	try{
-	    conn.runCommand( "admin" , serverStatusCmd , serverStatusReturned );
-	    newHost.append( "serverStatus" , serverStatusReturned );
-	}
-	catch ( DBException& e ){
-	    newHost.append( "serverStatus" , e.toString() );
-	} 
-
-	try{
-	    conn.runCommand( "admin" , getShardVersionCmd , getShardVersionReturned );
-	    newHost.append( "shardVersion" , getShardVersionReturned );
-	}	
-	catch ( DBException& e ){
-	    newHost.append( "shardVersion" , e.toString() );
-	}
+	collect( conn , "admin" , newHost , hostInfoCmd, hostInfoReturned, "hostInfo" );
+	collect( conn , "admin" , newHost , serverStatusCmd , serverStatusReturned, "serverStatus" );
+	collect( conn , "admin" , newHost , getShardVersionCmd , getShardVersionReturned , "shardVersion" );
 
 	// only mongod instances collect the following
 	string mongod = "mongod";
-	if( mongod.compare(type.getStringField("process")) == 0 ){	
-	    try{
-		conn.runCommand( "admin" , buildInfoCmd , buildInfoReturned );
-		newHost.append( "buildInfo" , buildInfoReturned );
-	    }
-	    catch ( DBException& e ){
-		newHost.append( "buildInfo" , e.toString() );
-	    }
-	}
+	if( mongod.compare(type.getStringField("process")) == 0 )	
+	    collect( conn , "admin" , newHost , buildInfoCmd , buildInfoReturned , "buildInfo" );
 
 	string primary = "primary";
 	string secondary = "secondary";
 	// only shard mongod instances collect the following
-	if ( primary.compare(type.getStringField("role")) == 0 || secondary.compare(type.getStringField("role")) == 0 ){
-	    try{
-		conn.runCommand( "admin" , isMasterCmd , isMasterReturned );
-		newHost.append( "isMaster" , isMasterReturned );
-	    }
-	    catch ( DBException& e) {
-		newHost.append( "isMaster" , e.toString() );
-	    }
-	}
+	if ( primary.compare(type.getStringField("role")) == 0 || secondary.compare(type.getStringField("role")) == 0 )
+	    collect( conn , "admin" , newHost , isMasterCmd , isMasterReturned , "isMaster" );
     }
+
 
     int PingMonitor::getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 	try{

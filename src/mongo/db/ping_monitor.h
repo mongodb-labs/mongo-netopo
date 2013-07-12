@@ -36,22 +36,39 @@
         virtual ~PingMonitor(){}
         virtual string name() const { return "PingMonitor"; }
 
-	static void setTarget( HostAndPort newTarget );
+	static map< string , string > ERRCODES;
 
 	static BSONObj getMonitorResults();
+
 	static string getTarget();
-	
+	static string getTargetNetworkType();
+	static bool setTarget( HostAndPort hp );
+
+	static bool getIsMonitoring();
+	static bool turnOffMonitoring();
+	static bool turnOnMonitoring();
+	static bool switchMonitoringTarget( HostAndPort hp );
+	static void clearMonitoringHistory();
+    
     private:
 
-	static map< string , string > ERRCODES;
 	static boost::mutex _mutex;
-	static BSONObj monitorResults;
-	static HostAndPort target;
 
-	static void doPingForTarget();
-	static bool targetSet; 
-	static void turnOffMonitoring();
+	static HostAndPort target;
+	static string targetNetworkType;
+	static bool targetIsSet; 
+	
+	static BSONObj monitorResults; // this will eventually be replaced by local db
+
+	static bool isMonitoring;
+	
+	static BSONObj canConnect( HostAndPort hp );
+	static string determineTargetNetworkType( DBClientConnection& conn );
+
 	virtual void run();
+	static void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
+	static void doPingForCluster( DBClientConnection& conn );
+	static void doPingForReplset( DBClientConnection& conn );
 
 	static BSONObj reqConnChart;
 	static BSONObj recConnChart;
