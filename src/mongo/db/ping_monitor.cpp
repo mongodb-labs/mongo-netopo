@@ -36,6 +36,17 @@ namespace mongo {
 
     boost::mutex PingMonitor::_mutex;
 
+    map< string , string> PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
+
+    map<string,string> PingMonitor::initializeErrcodes(){
+	map<string,string> m;
+	m["MISSING_REQ_CONN"] = "Missing required connection to ";
+	m["MISSING_REC_CONN"] = "Missing recommended connection to ";
+
+	return m;
+    };
+
+
     bool PingMonitor::targetSet = false;
     HostAndPort PingMonitor::target;
     string PingMonitor::getTarget(){
@@ -470,10 +481,16 @@ namespace mongo {
 		BSONObj tgtNodeInfo = tgtElem.embeddedObject();
 		BSONObj edge = edges.getObjectField( srcElem.fieldName() ).getObjectField( tgtElem.fieldName() );
 		if ( edge["isConnected"].boolean() == false ){
-		    if( isReqConn( srcNodeInfo.getObjectField("type")["role"].valuestrsafe() , tgtNodeInfo.getObjectField("type")["role"].valuestrsafe() ) )
-			addError( srcNodeInfo["key"].valuestrsafe() , /*TODO*/ "I'm an error" , errors );
-		    if( isRecConn( srcNodeInfo.getObjectField("type")["role"].valuestrsafe() , tgtNodeInfo.getObjectField("type")["role"].valuestrsafe() ) )
-			addWarning( srcNodeInfo["key"].valuestrsafe() , /*TODO*/ "I'm a warning" , warnings ); 
+		    if( isReqConn( srcNodeInfo.getObjectField("type")["role"].valuestrsafe() , tgtNodeInfo.getObjectField("type")["role"].valuestrsafe() ) ){
+			string err( ERRCODES["MISSING_REQ_CONN"] );
+			err += tgtNodeInfo["hostName"].valuestrsafe();	
+			addError( srcNodeInfo["key"].valuestrsafe() , err , errors );
+		    }
+		    if( isRecConn( srcNodeInfo.getObjectField("type")["role"].valuestrsafe() , tgtNodeInfo.getObjectField("type")["role"].valuestrsafe() ) ){
+			string warn( ERRCODES["MISSING_REC_CONN"] );
+			warn += tgtNodeInfo["hostName"].valuestrsafe();
+			addWarning( srcNodeInfo["key"].valuestrsafe() , warn , warnings ); 
+		    }
 		}
 	    }
 	}
