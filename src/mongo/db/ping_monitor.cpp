@@ -70,6 +70,7 @@ namespace mongo {
 //	    nodeData.append( "process" , nodeObj["process"].valuestrsafe() );
 	    nodeData.append( "role" , (nodeObj.getObjectField("type"))["role"].valuestrsafe() );
 	    nodeData.append( "uptimeMillis" , nodeObj.getObjectField("serverStatus")["uptimeMillis"]._numberLong() );
+	    nodeData.append( "key" , nodeObj["key"].valuestrsafe() );
 	    nodeShow.append( nodeElem.fieldName() , nodeData.obj() ); 
 //	    nodeShow.append( nodeElem.fieldName() , nodeObj["hostName"].valuestrsafe() );
 	}
@@ -90,8 +91,8 @@ namespace mongo {
  
 //    	show.append( "edges_full" , monitorResults.getObjectField("edges") ); 
 //	show.append( "nodes_full" , monitorResults.getObjectField("nodes") );
-	show.append( "edges" , edgeShow.obj() );
-//	show.append( "nodes" , nodeShow.obj() );
+//	show.append( "edges" , edgeShow.obj() );
+	show.append( "nodes" , nodeShow.obj() );
 
 	show.append( "errors" , monitorResults.getObjectField("errors") );
 	show.append( "warnings" , monitorResults.getObjectField("warnings") );
@@ -160,8 +161,8 @@ namespace mongo {
 	    BSONArrayBuilder aBuilder;
 	    for( vector<string>::iterator vecItr = mapItr->second.begin(); vecItr!=mapItr->second.end(); vecItr++){
 		aBuilder.append( *vecItr );	
+
 	    }
-	    aBuilder.append( "i'm" , "trying" );
 	   b.append( mapItr->first , aBuilder.arr() ); 
 	} 
 	return b.obj();
@@ -278,8 +279,9 @@ namespace mongo {
 		    newHost.append( "machine" , "" );
 		    newHost.append( "process" , "mongod" );
 		    newHost.append( "shardName" , shardName );
-		    newHost.append( "key" , currToken + "_" + "" + "_" + "mongod" );
+		    newHost.append( "key" , memberHosts + "_" + "" + "_" + "mongod" );
 		    BSONObj type = BSON( "process" << "mongod" << "role" << "secondary" );
+		    newHost.append( "type" , type );
 		    collectClientInfo( currToken , newHost , type , errors , warnings );
 		    char idString[100];
 		    sprintf(idString , "%d" , id);
@@ -318,6 +320,7 @@ namespace mongo {
 		newHost.append( "process" , "mongos" );
 		newHost.append( "key" , hostField + "_" + "" + "_" + "mongos" );
 		BSONObj type = BSON( "process" << "mongos" << "role" << "mongos" );
+		newHost.append( "type" , type );
 		collectClientInfo( hostField , newHost , type , errors , warnings );
 		char idString[100];
 		sprintf(idString , "%d" , id);
@@ -341,6 +344,7 @@ namespace mongo {
 	    newHost.append( "process" , "mongod");
 	    newHost.append( "key" , host + "_" + "" + "_" + "mongod" );
 	    BSONObj type = BSON( "process" << "mongod" << "role" << "config" );
+	    newHost.append( "type" , type );
 	    collectClientInfo( host , newHost , type , errors , warnings );
 	    char idString[100];
 	    sprintf(idString, "%d", id);
@@ -386,7 +390,7 @@ namespace mongo {
 			}
 			else{
 			    newEdge.append( "isConnected" , true );
-			    newEdge.append( "pingTimeMicrosecs" , edgeInfo["pingTimeMicrosecs"]._numberLong() );
+/*TODO: fix this*/  	    newEdge.append( "pingTimeMicrosecs" , edgeInfo["pingTimeMicrosecs"]._numberLong() );
 			}
 			newEdge.append( "bytesSent" , edgeInfo["bytesSent"]._numberLong() );
 			newEdge.append( "bytesReceived" , edgeInfo["bytesReceived"]._numberLong() );
@@ -446,39 +450,37 @@ namespace mongo {
 	vector<string>::iterator it;
 	if( (it = find( list.begin(), list.end(), err )) == list.end() )
 	    list.push_back( err );
+	errors[ key ] = list;
     }
 
-    void PingMonitor::addWarning(const string& key , const string& warn , map<string, vector<string> >& warnings){
+    void PingMonitor::addWarning(const string& key , const string& warn , map<string, vector<string> >& warnings){  
 	vector<string> list = warnings[ key ];
 	vector<string>::iterator it;
 	if( (it = find( list.begin(), list.end(), warn )) == list.end() )
 	    list.push_back( warn );
+	warnings [ key ] = list;
     }
  
     void PingMonitor::diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
-	for (BSONObj::iterator srcNode = nodes.begin(); srcNode.more(); ){
-	    BSONElement srcElem = srcNode.next();
-	    BSONObj srcObj = srcElem.embeddedObject();
-	    for( BSONObj::iterator tgtNode = nodes.begin(); tgtNode.more(); ){
-		BSONElement tgtElem = tgtNode.next();
-		BSONObj tgtObj = srcElem.embeddedObject();
-		BSONObj currEdge = edges.getObjectField( srcElem.fieldName() ).getObjectField( tgtElem.fieldName() );
-		if( currEdge["isConnected"].boolean() == false){
-		    if( isReqConn( srcObj[ "hostName" ].valuestrsafe() , tgtObj[ "hostName" ].valuestrsafe() ) ) 
-			addError( srcObj[ "key" ].valuestrsafe() , /*TODO*/ "I'm an error" , errors );	
-		    if( isRecConn( srcObj[ "hostName" ].valuestrsafe() , tgtObj[ "hostName" ].valuestrsafe() ) ) 
-			addWarning( srcObj[ "key" ].valuestrsafe(), /*TODO*/"I'm a warning" , warnings );	
+	for (BSONObj::iterator i = nodes.begin(); i.more(); ){
+	    BSONElement srcElem = i.next();
+	    BSONObj srcNodeInfo = srcElem.embeddedObject();
+	    for( BSONObj::iterator j = nodes.begin(); j.more(); ){
+		BSONElement tgtElem = j.next(); 
+		BSONObj tgtNodeInfo = tgtElem.embeddedObject();
+		BSONObj edge = edges.getObjectField( srcElem.fieldName() ).getObjectField( tgtElem.fieldName() );
+		if ( edge["isConnected"].boolean() == false ){
+		    if( isReqConn( srcNodeInfo.getObjectField("type")["role"].valuestrsafe() , tgtNodeInfo.getObjectField("type")["role"].valuestrsafe() ) )
+			addError( srcNodeInfo["key"].valuestrsafe() , /*TODO*/ "I'm an error" , errors );
+		    if( isRecConn( srcNodeInfo.getObjectField("type")["role"].valuestrsafe() , tgtNodeInfo.getObjectField("type")["role"].valuestrsafe() ) )
+			addWarning( srcNodeInfo["key"].valuestrsafe() , /*TODO*/ "I'm a warning" , warnings ); 
 		}
 	    }
 	}
-
-
-
     }
 
     void PingMonitor::run() {
 //	Client::initThread( name().c_str() );
-   
 	while ( ! inShutdown() ) {
 	    LOG(3) << "PingMonitor thread awake" << endl;
 	    if( false /*lockedForWriting()*/ ) {
