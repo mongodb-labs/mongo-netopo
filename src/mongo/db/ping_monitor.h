@@ -40,9 +40,10 @@
 
 	static BSONObj getMonitorResults();
 
-	static string getTarget();
+	static HostAndPort getTarget();
 	static string getTargetNetworkType();
 	static bool setTarget( HostAndPort hp );
+	static bool getTargetIsSet();
 
 	static bool getIsMonitoring();
 	static bool turnOffMonitoring();
@@ -63,7 +64,7 @@
 	static bool isMonitoring;
 	
 	static BSONObj canConnect( HostAndPort hp );
-	static string determineTargetNetworkType( DBClientConnection& conn );
+	static bool determineNetworkType( DBClientConnection& conn );
 
 	virtual void run();
 	static void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()

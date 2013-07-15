@@ -149,12 +149,30 @@ namespace mongo {
 
 	    if( ( cmdObj["target"].trueValue() ) ) {
 		string targetString = cmdObj.getStringField("target");
-		HostAndPort newTarget( targetString );
-		PingMonitor::setTarget( newTarget );
-		result.append("newTarget" , PingMonitor::getTarget() ); 
+		try{
+		    HostAndPort newTarget( targetString );
+		    cout << "reaches before setTarget" << endl;	
+	        if( PingMonitor::setTarget( newTarget ) ){
+		    cout << "reaches after setTarget" << endl;
+			result.append("newTarget" , PingMonitor::getTarget().toString(true) ); 
+			PingMonitor::turnOnMonitoring();
+		    }
+		    else{
+			result.append("errmsg" , "Input target is not valid");
+			return false;
+		    }
+		} catch( DBException& e ){}
 	    }
 
-	    result.append("output" , PingMonitor::getMonitorResults( ));
+
+	    if( PingMonitor::getTargetIsSet() == false )
+		result.append( "errmsg" , "Target is not set" );
+	    else if( PingMonitor::getIsMonitoring() == false )
+		result.append( "errmsg" , "Ping monitoring is not turned on");
+	    else{
+		result.append("target" , PingMonitor::getTarget().toString(true) ); 
+		result.append("output" , PingMonitor::getMonitorResults( ));
+	    }
 	    return true;
 	}
 

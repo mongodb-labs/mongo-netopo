@@ -59,24 +59,29 @@ namespace mongo {
     HostAndPort PingMonitor::target;
     string PingMonitor::targetNetworkType;
 
-    string PingMonitor::getTarget(){
-	if( targetIsSet )
-	    return target.toString(true); 
-	else
-	    return NULL;
+    // always check if target is set before using 
+    HostAndPort PingMonitor::getTarget(){
+	return target; 
     } 
 
+    bool PingMonitor::getTargetIsSet(){
+	return targetIsSet;
+    }
+
+    // returns false if target is invalid (not of master in a network system,
+    // not running a mongod or mongos instance, etc )
     bool PingMonitor::setTarget( HostAndPort hp ){
 	BSONObj connStatus = canConnect( hp );
 	if( connStatus["isConnected"].boolean() ){
-	    targetNetworkType = connStatus["networkType"].valuestrsafe();
-    	    if( targetNetworkType != NULL ){
+	    cout << "reaches isConnected is true" << endl; 
+	    if( connStatus["networkOk"].boolean() ){
+		cout << "reaches networkOk is true" << endl;
 		target = hp;
 		targetIsSet = true;
 		return true;
 	    }
 	    else{
-		//TODO, target is not replset primary or mongos
+		//TODO, target is not replset primary or mongo
 	    }
 	}
 	else{
@@ -86,11 +91,9 @@ namespace mongo {
 	return false;	    
     }
 
+    // always check if target is set before using
     string PingMonitor::getTargetNetworkType(){
-	if( targetIsSet )
 	    return targetNetworkType;
-	else
-	    return NULL;
     }
 
 
@@ -146,7 +149,7 @@ namespace mongo {
 	    isConnected = conn.connect( hp.toString(true) , connInfo );
 	    toReturn.append("isConnected" , isConnected );
 	    toReturn.append("connInfo" , connInfo);
-	    toReturn.append("networkType" , determineTargetNetworkType( conn ) );
+	    toReturn.append("networkOk" , determineNetworkType( conn ) );
 	}
 	catch( DBException& e){ 
 	    toReturn.append("isConnected" , false );
@@ -161,23 +164,28 @@ namespace mongo {
     // returns "replica_set" if target is a primary in a replica set or a master in a master-slave relationshipt
     // returns NULL if target is a standalone mongod, secondary, or slave
     // returns NULL if unable to determine network type ( catches DBException )
-    string PingMonitor::determineTargetNetworkType( DBClientConnection& conn ){
+    bool PingMonitor::determineNetworkType( DBClientConnection& conn ){
 	BSONObj isMasterCmd = BSON( "isMaster" << 1 );
 	BSONObj cmdReturned;
 	string isdbgrid = "isdbgrid";
 	try{
 	    conn.runCommand( "admin" , isMasterCmd , cmdReturned );
+	    cout << cmdReturned["msg"].valuestrsafe() << endl;
 	    if( cmdReturned["isMaster"].valuestrsafe() == false )
-		return NULL;  
-	    if( cmdReturned["msg"].trueValue() && isdbgrid.compare(cmdReturned["msg"].valuestrsafe()) )
-		return "sharded_cluster";
-	    if( cmdReturned["setName"].trueValue() )
-		return "replica_set";	
+		return false;  
+	    if( cmdReturned["msg"].trueValue() ){
+		targetNetworkType = "sharded_cluster";
+		return true;
+	    }
+	    if( cmdReturned["setName"].trueValue() ){
+		targetNetworkType = "replica_set";
+		return true;
+	    }	
 	}
 	catch( DBException& e){
-	    return NULL;
+	    return false;
 	}
-	return NULL;
+	return false;
     }
 
 
@@ -275,6 +283,8 @@ namespace mongo {
 	resultBuilder.append("errors" , errors);
 	resultBuilder.append("warnings" , warnings); 
 	resultBuilder.append("currentTime" , jsTime() );
+
+//	conn.insert( "local" , resultBuilder.obj() );
 	monitorResults = resultBuilder.obj();	  
     }
 
