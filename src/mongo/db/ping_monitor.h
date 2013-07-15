@@ -50,7 +50,9 @@
 	static bool turnOnMonitoring();
 	static bool switchMonitoringTarget( HostAndPort hp );
 	static void clearMonitoringHistory();
-   
+ 
+	static BSONObj calculateStats();
+  
 	static bool setPingInterval( int nsecs );
 	static int getPingInterval(); 
     private:
@@ -68,6 +70,8 @@
 	
 	static BSONObj canConnect( HostAndPort hp );
 	static bool determineNetworkType( DBClientConnection& conn );
+
+	static void addNewNodes( DBClientConnection& conn, BSONObj& nodes );
 
 	virtual void run();
 	static void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()

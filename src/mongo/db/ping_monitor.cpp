@@ -55,6 +55,7 @@ namespace mongo {
 	m["MISSING_REQ_CONN"] = "Missing required connection to ";
 	m["MISSING_REC_CONN"] = "Missing recommended connection to ";
 	m["TARGET_NOT_NETWORK_MASTER"] = "Target is not the master of a network (primary of replica set, mongos instance, or master in master-slave relationship).";
+	m["NOT_ENOUGH_RECORDS"] = "Not enough PingMonitor records to complete this action.";
 	return m;
     };
 
@@ -203,9 +204,9 @@ namespace mongo {
 	bool isConnected;
 	isConnected = conn.connect( target , connInfo );
 	BSONObj monitorResults;
-	//auto_ptr<DBClientCursor> cursor  = conn.query( "local.pingmonitor" , Query(BSONObj()).sort("_id",-1) );
+	auto_ptr<DBClientCursor> cursor  = conn.query( "test.pingmonitor" , Query(BSONObj()).sort("_id",-1) );
 	//how to connect to local db on self?
-	auto_ptr<DBClientCursor> cursor = conn.query( "test.pingmonitor" , BSONObj() );
+//	auto_ptr<DBClientCursor> cursor = conn.query( "test.pingmonitor" , BSONObj() );
 	monitorResults = cursor->next();
 	BSONObjBuilder show;
 	BSONObjBuilder nodeShow;
@@ -318,8 +319,32 @@ namespace mongo {
 	resultBuilder.append("warnings" , warnings); 
 	resultBuilder.append("currentTime" , jsTime() );
 
+	addNewNodes( conn , nodes );
+
 	conn.insert( "test.pingmonitor" , resultBuilder.obj() );
 //	monitorResults = resultBuilder.obj();	  
+    }
+
+    void PingMonitor::addNewNodes( DBClientConnection& conn , BSONObj& nodes ){
+	BSONObjBuilder allNodes;
+    
+	for( BSONObj::iterator i=nodes.begin(); i.more(); ){
+	    BSONElement nodeElem = i.next();
+	    BSONObj nodeObj = nodeElem.embeddedObject();
+	    BSONObjBuilder nodeFields;
+	    nodeFields.append( "currentRole" , nodeObj.getObjectField("type")["role"].valuestrsafe() );
+	    //nodeSubObj.appendArray( "previousRoles" )
+
+	    BSONObjBuilder qBuilder;
+	    qBuilder.append( nodeObj["key"].valuestrsafe() , nodeFields.obj() );
+	    qBuilder.append("upsert" , true );
+	    Query q( qBuilder.obj() ); 
+
+
+	   // conn.update("test.pingmonitor.allnodes" , q );	    
+
+	}	
+
     }
 
     BSONObj convertToBSON( map<string, vector<string> >& m ){
@@ -552,7 +577,13 @@ namespace mongo {
     }
 
     void PingMonitor::buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap ){
+	for(BSONObj::iterator i = nodes.begin(); i.more(); ){
+	    BSONElement nodeElem = i.next();
+	    BSONObj nodeObj = nodeElem.embeddedObject();
+	    idMap.append( nodeObj["key"].valuestrsafe() , nodeElem.fieldName() ); 
 
+
+	}
     }
 
     void PingMonitor::initializeCharts(){
@@ -627,7 +658,73 @@ namespace mongo {
 	}
     }
 
-  
+/*    BSONObj PingMonitor::calculateStats(){
+	BSONObjBuilder results;
+*/    /* fields
+	numPingAttempts
+	numSuccessful
+	numFailed
+	percentageIsConnected
+	avgIncomingSocketExceptions
+	avgOutgiongSocketExceptions
+	avgBytesSent
+	avgBytesReceived
+	maxPingTimeMicrosecs
+	minPingTimeMicrosecs
+	avgPingTimeMicrosecs
+	pingTimeStdDeviation	
+    */
+
+    /* auxiliary fields
+	sumPingTimeMicrosecs
+	subtractMeanSquaredSum
+    */
+
+/*
+
+	DBClientConnection conn;
+	string connInfo;
+	bool isConnected;
+	BSONObj monitorResults;
+	try{
+	    isConnected = conn.connect( target , connInfo );
+	    if( conn.count("test.pingMonitor") < 1 ){
+		results.append("errmsg" , ERRCODES["NOT_ENOUGH_RECORDS"]);
+		return results.obj();
+	    }
+	    auto_ptr<DBClientCursor> cursor  = conn.query( "test.pingmonitor" , Query(BSONObj()).sort("_id",-1) );
+	   
+	    while( cursor->more() ){ 
+		BSONObj moment = cursor->next();
+		BSONObj edges = moment["edges"].embeddedObject();	
+			    
+		//max and min ping time, num ping attempts, num successful, num failed, num socket exceptions, num bytes exchanged
+		for (BSONObj::iterator i = monitorResults.getObjectField("edges").begin(); i.more(); ){
+		    const BSONElement srcElem = i.next();
+		    const BSONObj srcObj = srcElem.embeddedObject();
+		    for( BSONObj::iterator j = srcObj.begin(); j.more(); ){
+			const BSONElement tgtElem = j.next();
+			const BSONObj tgtObj = tgtElem.embeddedObject();
+			string edgestr = "";
+			edgestr += srcElem.fieldName();
+			edgestr += " -> ";
+			edgestr += tgtElem.fieldName();
+			edgestr += tgtObj["pingTimeMicrosecs"].valuestrsafe();
+			edgeShow.append( edgestr , tgtObj["isConnected"].boolean() );
+		    }
+		}
+	   /
+
+
+	    }
+	} catch( DBException& e ){ TODO }
+
+	return results.obj();
+
+    }
+*/
+
+
     void PingMonitor::run() {
 //	Client::initThread( name().c_str() );
 	while ( ! inShutdown() ) {
