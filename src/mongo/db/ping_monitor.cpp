@@ -29,6 +29,8 @@
 #include "mongo/db/repl/is_master.h"
 #include "mongo/util/background.h"
 #include <boost/tokenizer.hpp>
+#include <unistd.h>
+
 
 namespace mongo {
 
@@ -38,7 +40,9 @@ namespace mongo {
 
     bool PingMonitor::isMonitoring = false;
     bool PingMonitor::targetIsSet = false;
-
+    int PingMonitor::pingInterval = 15; // 15 seconds 
+    bool PingMonitor::setPingInterval( int nsecs ){ pingInterval = nsecs; return true; }
+    int PingMonitor::getPingInterval(){ return pingInterval; }
     BSONObj PingMonitor::reqConnChart;
     BSONObj PingMonitor::recConnChart;
  
@@ -50,6 +54,7 @@ namespace mongo {
 	map<string,string> m;
 	m["MISSING_REQ_CONN"] = "Missing required connection to ";
 	m["MISSING_REC_CONN"] = "Missing recommended connection to ";
+	m["TARGET_NOT_NETWORK_MASTER"] = "Target is not the master of a network (primary of replica set, mongos instance, or master in master-slave relationship).";
 	return m;
     };
 
@@ -70,30 +75,34 @@ namespace mongo {
 
     // returns false if target is invalid (not of master in a network system,
     // not running a mongod or mongos instance, etc )
-    bool PingMonitor::setTarget( HostAndPort hp ){
+    BSONObj PingMonitor::setTarget( HostAndPort hp ){
+	BSONObjBuilder toReturn;
 	BSONObj connStatus = canConnect( hp );
 	if( connStatus["isConnected"].boolean() ){
-	    cout << "reaches isConnected is true" << endl; 
 	    if( connStatus["networkOk"].boolean() ){
-		cout << "reaches networkOk is true" << endl;
 		target = hp;
 		targetIsSet = true;
-		return true;
+		toReturn.append("ok" , true);
+		return toReturn.obj();
 	    }
 	    else{
-		//TODO, target is not replset primary or mongo
+		// target is not a replica set primary or mongos instance
+		toReturn.append("ok" , false);
+		toReturn.append("errmsg" , ERRCODES["TARGET_NOT_NETWORK_MASTER"] );
 	    }
 	}
 	else{
-	    //TODO, can't make client connection to requested target
+	    // can't make client connection to requested target
 	    // connStatus["connectionMsg"] contains message from connect()
+	    toReturn.append("ok" , false );
+	    toReturn.append("errmsg" , connStatus["connectionMsg"] );
 	}
-	return false;	    
+	return toReturn.obj();	    
     }
 
     // always check if target is set before using
     string PingMonitor::getTargetNetworkType(){
-	    return targetNetworkType;
+	return targetNetworkType;
     }
 
 
@@ -124,7 +133,7 @@ namespace mongo {
 	// if had been monitoring with previous target, keep doing that
 	// if had not been monitoring, remain that way
     bool PingMonitor::switchMonitoringTarget( HostAndPort hp ){
-	if( setTarget( hp ) ){
+	if( setTarget( hp )["ok"].boolean() ){
 	    turnOnMonitoring();
 	    return true;
 	}
@@ -167,10 +176,8 @@ namespace mongo {
     bool PingMonitor::determineNetworkType( DBClientConnection& conn ){
 	BSONObj isMasterCmd = BSON( "isMaster" << 1 );
 	BSONObj cmdReturned;
-	string isdbgrid = "isdbgrid";
 	try{
 	    conn.runCommand( "admin" , isMasterCmd , cmdReturned );
-	    cout << cmdReturned["msg"].valuestrsafe() << endl;
 	    if( cmdReturned["isMaster"].valuestrsafe() == false )
 		return false;  
 	    if( cmdReturned["msg"].trueValue() ){
@@ -189,8 +196,17 @@ namespace mongo {
     }
 
 
-    BSONObj PingMonitor::monitorResults;
+//    BSONObj PingMonitor::monitorResults;
     BSONObj PingMonitor::getMonitorResults(){ 
+	DBClientConnection conn;
+	string connInfo;
+	bool isConnected;
+	isConnected = conn.connect( target , connInfo );
+	BSONObj monitorResults;
+	//auto_ptr<DBClientCursor> cursor  = conn.query( "local.pingmonitor" , Query(BSONObj()).sort("_id",-1) );
+	//how to connect to local db on self?
+	auto_ptr<DBClientCursor> cursor = conn.query( "test.pingmonitor" , BSONObj() );
+	monitorResults = cursor->next();
 	BSONObjBuilder show;
 	BSONObjBuilder nodeShow;
 	BSONObjBuilder edgeShow;
@@ -218,6 +234,7 @@ namespace mongo {
 		edgestr += srcElem.fieldName();
 		edgestr += " -> ";
 		edgestr += tgtElem.fieldName();
+		edgestr += tgtObj["pingTimeMicrosecs"].valuestrsafe();
 		edgeShow.append( edgestr , tgtObj["isConnected"].boolean() );
 	    }
 	}
@@ -241,6 +258,7 @@ namespace mongo {
 	string connInfo;
 	bool isConnected;
 	isConnected = conn.connect( target , connInfo );
+	//TODO error handling
 	if( targetNetworkType == "replica_set" )
 	    doPingForReplset( conn );
 	else if( targetNetworkType == "sharded_cluster" )
@@ -252,6 +270,22 @@ namespace mongo {
     }
 
     void PingMonitor::doPingForCluster( DBClientConnection& conn ){
+/*
+	struct addrinfo *info, *p;
+	int gai_result;
+	char hostname[1024];
+	hostname[1023] = '\0';
+	gethostname( hostname, 1023 );
+
+	if( (gai_result = getaddrinfo( hostname, &info ) != 0 ) ){
+	    fprintf( stderr, "getaddrinfo: %s\n", gai_strerror(gai_result) );
+	    cout << "failed";
+	}
+
+	for( p = info; p!=NULL; p=p->ai_next){
+	    printf("hostname: %s\n" , p->ai_canonname);
+	}
+*/
 
 	BSONObjBuilder resultBuilder;
 	resultBuilder.append( "target" , target.toString(true) );
@@ -284,8 +318,8 @@ namespace mongo {
 	resultBuilder.append("warnings" , warnings); 
 	resultBuilder.append("currentTime" , jsTime() );
 
-//	conn.insert( "local" , resultBuilder.obj() );
-	monitorResults = resultBuilder.obj();	  
+	conn.insert( "test.pingmonitor" , resultBuilder.obj() );
+//	monitorResults = resultBuilder.obj();	  
     }
 
     BSONObj convertToBSON( map<string, vector<string> >& m ){
@@ -498,7 +532,7 @@ namespace mongo {
 			}
 			else{
 			    newEdge.append( "isConnected" , true );
-/*TODO: fix this*/  	    newEdge.append( "pingTimeMicrosecs" , edgeInfo["pingTimeMicrosecs"]._numberLong() );
+/*TODO: fix this*/  	    newEdge.append( "pingTimeMicrosecs" , edgeInfo["pingTimeMicrosecs"].valuestrsafe() );
 			}
 			newEdge.append( "bytesSent" , edgeInfo["bytesSent"]._numberLong() );
 			newEdge.append( "bytesReceived" , edgeInfo["bytesReceived"]._numberLong() );
@@ -593,6 +627,7 @@ namespace mongo {
 	}
     }
 
+  
     void PingMonitor::run() {
 //	Client::initThread( name().c_str() );
 	while ( ! inShutdown() ) {
@@ -608,7 +643,7 @@ namespace mongo {
 	    //    continue;
 	    //TODO: change this to defaulting to self; also to being settable
 	    doPingForTarget();
-    	    sleepsecs( 15 );
+    	    sleepsecs( pingInterval );
 	}
     }
 

@@ -42,7 +42,7 @@
 
 	static HostAndPort getTarget();
 	static string getTargetNetworkType();
-	static bool setTarget( HostAndPort hp );
+	static BSONObj setTarget( HostAndPort hp );
 	static bool getTargetIsSet();
 
 	static bool getIsMonitoring();
@@ -50,7 +50,9 @@
 	static bool turnOnMonitoring();
 	static bool switchMonitoringTarget( HostAndPort hp );
 	static void clearMonitoringHistory();
-    
+   
+	static bool setPingInterval( int nsecs );
+	static int getPingInterval(); 
     private:
 
 	static boost::mutex _mutex;
@@ -58,8 +60,9 @@
 	static HostAndPort target;
 	static string targetNetworkType;
 	static bool targetIsSet; 
+	static int pingInterval;
 	
-	static BSONObj monitorResults; // this will eventually be replaced by local db
+//	static BSONObj monitorResults; // this will eventually be replaced by local db
 
 	static bool isMonitoring;
 	
