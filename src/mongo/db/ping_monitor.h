@@ -32,71 +32,73 @@
     class PingMonitor : public BackgroundJob {
 
     public:
-        PingMonitor(){}
+        PingMonitor( HostAndPort& _hp , HostAndPort& _self , bool _on , int _interval , string _collectionPrefix , string _networkType ){
+	    initializeCharts();
+    	    self = _self;
+	    target = _hp;
+	    on = _on;
+	    interval = _interval;
+	    collectionPrefix = _collectionPrefix; 
+	    networkType = _networkType;
+	}
+
         virtual ~PingMonitor(){}
         virtual string name() const { return "PingMonitor"; }
 
-	static map< string , string > ERRCODES;
-
-	static BSONObj getMonitorResults();
-
-	static HostAndPort getTarget();
-	static string getTargetNetworkType();
-	static BSONObj setTarget( HostAndPort hp );
-	static bool getTargetIsSet();
-
-	static bool getIsMonitoring();
-	static bool turnOffMonitoring();
-	static bool turnOnMonitoring();
-	static bool switchMonitoringTarget( HostAndPort hp );
-	static void clearMonitoringHistory();
+	BSONObj getInfo();
+	string getNetworkType();
+	string getCollectionPrefix();
+	int getInterval(); 
+	bool setInterval( int nsecs );
+	bool isOn();
+	bool turnOn();
+	bool turnOff();
+	void clearHistory();
  
-	static BSONObj calculateStats();
-  
-	static bool setPingInterval( int nsecs );
-	static int getPingInterval(); 
+	BSONObj getMonitorInfo();
+
+	BSONObj calculateStats();
+	BSONObj calculateDeltas();
+
     private:
 
-	static boost::mutex _mutex;
-
-	static HostAndPort target;
-	static string targetNetworkType;
-	static bool targetIsSet; 
-	static int pingInterval;
-	
-//	static BSONObj monitorResults; // this will eventually be replaced by local db
-
-	static bool isMonitoring;
-	
-	static BSONObj canConnect( HostAndPort hp );
-	static bool determineNetworkType( DBClientConnection& conn );
-
-	static void addNewNodes( DBClientConnection& conn, BSONObj& nodes );
-
-	virtual void run();
-	static void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
-	static void doPingForCluster( DBClientConnection& conn );
-	static void doPingForReplset( DBClientConnection& conn );
-
+	boost::mutex _mutex;
+	static map< string , string > ERRCODES;
+   	static map<string,string> initializeErrcodes();
+	static const double socketTimeout = 30.0;
 	static BSONObj reqConnChart;
 	static BSONObj recConnChart;
 
-	static map<string,string> initializeErrcodes();
+	HostAndPort self;
+	HostAndPort target;
+	bool on;
+	int interval;
+	string collectionPrefix;		
+    	string networkType;
+
+    	virtual void run();
+	void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
+	void doPingForReplset();
+	void doPingForCluster();
+
+	void addNewNodes( HostAndPort& target , BSONObj& nodes );
+
 	static void initializeCharts();
-	static void addError(const string& key , const string& err , map<string, vector<string> >& errors);
-	static void addWarning(const string& key , const string& warning , map<string, vector<string> >& warnings);
-	static int getShardServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	static int getMongosServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	static int getConfigServers( DBClientConnection& conn , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	static void buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	static void buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap );
-	static void diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	static bool isReqConn( const string& src , const string& tgt);
-	static bool isRecConn( const string& src , const string& tgt);
-	friend void startPingBackgroundJob();
+	void addError(const string& key , const string& err , map<string, vector<string> >& errors);
+	void addWarning(const string& key , const string& warning , map<string, vector<string> >& warnings);
+
+	int getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	int getMongosServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	int getConfigServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+
+	void buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	void buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap );
+	void diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+
+	bool isReqConn( const string& src , const string& tgt);
+	bool isRecConn( const string& src , const string& tgt);
+
     };
 
-    void startPingBackgroundJob();
-    
     BSONObj convertToBSON( map< string , vector<string> >& m ); 
 }

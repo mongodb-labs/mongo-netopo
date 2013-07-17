@@ -667,8 +667,6 @@ namespace mongo {
             startTTLBackgroundJob();
         }
 
-	startPingBackgroundJob();
-
 #ifndef _WIN32
         CmdLine::launchOk();
 #endif
