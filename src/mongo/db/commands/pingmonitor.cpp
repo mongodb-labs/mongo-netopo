@@ -18,13 +18,11 @@
 
 #include "mongo/pch.h"
 
-#include <time.h>
-#include "boost/date_time/posix_time/posix_time.hpp"
 #include "mongo/client/parallel.h"
 #include "mongo/client/connpool.h"
 #include <sstream>
 #include "mongo/util/assert_util.h"
-#include "mongo/db/ping_monitor.h"
+#include "mongo/db/ping_monitor_thread_manager.h"
 
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/dbclient_rs.h"
@@ -56,142 +54,9 @@ namespace mongo {
 
     // PingMonitor commands
 
-    class TurnOnPingMonitorCommand : public Command {
+    class PingMonitorConfigureCommand : public Command {
     public:
-	TurnOnPingMonitorCommand() : Command( "turnOnPingMonitor" ) {}
-	virtual bool slaveOk() const { return true; } //might want to make this false later
-	virtual void help( stringstream &help ) const { help << "Starts the background PingMonitor process if the target is set." ; }
-	virtual LockType locktype() const { return NONE; }
-	virtual void addRequiredPrivileges( const std::string& dbname,
-					    const BSONObj& cmdObj,
-					    std::vector<Privilege>* out) {} // No auth required
-
-	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-
-	    if( PingMonitor::getTargetIsSet() ){
-		result.append( "target" , PingMonitor::getTarget());
-		if( PingMonitor::turnOnMonitoring() )
-		    return true;
-		else
-		    return false; 
-	    }
-	    else{
-		result.append("errmsg" , "Target is not set. Use database command { 'setPingMonitorTarget' : '<host:port>' } to set target, then turn on monitoring.");
-	    }
-	    return true;
-	}
-    } turnOnPingMonitorCmd;
-
-    class TurnOffPingMonitorCommand : public Command {
-    public:
-	TurnOffPingMonitorCommand() : Command( "turnOffPingMonitor" ) {}
-	virtual bool slaveOk() const { return true; } //might want to make this false later
-	virtual void help( stringstream &help ) const { help << "Stops the background PingMonitor process. Does not reset the target or clear monitoring history." ; }
-	virtual LockType locktype() const { return NONE; }
-	virtual void addRequiredPrivileges( const std::string& dbname,
-					    const BSONObj& cmdObj,
-					    std::vector<Privilege>* out) {} // No auth required
-
-	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-	    if( PingMonitor::turnOffMonitoring() )
-		return true;
-	    else
-		return false;
-	}
-    } turnOffPingMonitorCmd;
-
-    class SetPingMonitorTargetCommand : public Command {
-    public:
-	SetPingMonitorTargetCommand() : Command( "setPingMonitorTarget" ) {}
-	virtual bool slaveOk() const { return true; } //might want to make this false later
-	virtual void help( stringstream &help ) const { help << "Sets the target to the input host:port." ; }
-	virtual LockType locktype() const { return NONE; }
-	virtual void addRequiredPrivileges( const std::string& dbname,
-					    const BSONObj& cmdObj,
-					    std::vector<Privilege>* out) {} // No auth required
-
-	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-	    string empty = "";
-	    if( empty.compare( cmdObj["setPingMonitorTarget"].valuestrsafe() ) == 0 ) {
-		result.append("errmsg" , "Please give a valid host:port string for the target, ie { 'setPingMonitorTarget' : 'localhost:27017' }. ");
-		return false;
-	    }
-	    try{ 
-		HostAndPort p( cmdObj["setPingMonitorTarget"].valuestrsafe() );
-		BSONObj setInfo = PingMonitor::setTarget( p );
-		if( setInfo["ok"].boolean() ){
-		    result.append( "newTarget" , PingMonitor::getTarget().toString() );
-		    result.append( "isMonitoring" , PingMonitor::getIsMonitoring() );
-		    return true;
-		}
-		else{
-		    result.append("errmsg" , setInfo["errmsg"].valuestrsafe() );
-		    return false;
-		}
-	    } catch( std::exception& ex){
-		cout << "std::exception: " << ex.what() << endl;
-	    }
-
-	    return false;
-	}
-    } setPingMonitorCmd;
-
-    class CheckPingMonitorTargetCommand : public Command {
-    public:
-	CheckPingMonitorTargetCommand() : Command( "checkPingMonitorTarget" ) {}
-	virtual bool slaveOk() const { return true; } //might want to make this false later
-	virtual void help( stringstream &help ) const { help << "Returns the host:port that is currently set as the target, or reports that the target is not set." ; }
-	virtual LockType locktype() const { return NONE; }
-	virtual void addRequiredPrivileges( const std::string& dbname,
-					    const BSONObj& cmdObj,
-					    std::vector<Privilege>* out) {} // No auth required
-
-	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-	    if( PingMonitor::getTargetIsSet() )
-		result.append("target" , PingMonitor::getTarget() );
-	    else
-		result.append("msg" , "Target is not set. Set using db command { 'setPingMonitorTarget' : '<host:port>' }. ");
-	    return true;
-	}
-    } checkPingMonitorTargetCmd;
-
-    class SetPingMonitorIntervalCommand : public Command {
-    public:
-	SetPingMonitorIntervalCommand() : Command( "setPingMonitorInterval" ) {}
-	virtual bool slaveOk() const { return true; } //might want to make this false later
-	virtual void help( stringstream &help ) const { help << "Sets the PingMonitor background process to run every n seconds." ; }
-	virtual LockType locktype() const { return NONE; }
-	virtual void addRequiredPrivileges( const std::string& dbname,
-					    const BSONObj& cmdObj,
-					    std::vector<Privilege>* out) {} // No auth required
-
-	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-	    if( PingMonitor::setPingInterval( cmdObj["setPingMonitorInterval"].numberInt() ) )
-		return true;
-	    else
-		return false;
-	}
-    } setPingMonitorIntervalCmd;
-
-    class CheckPingMonitorIntervalCommand : public Command {
-    public:
-	CheckPingMonitorIntervalCommand() : Command( "checkPingMonitorInterval" ) {}
-	virtual bool slaveOk() const { return true; } //might want to make this false later
-	virtual void help( stringstream &help ) const { help << "Reports how often (in seconds) the PingMonitor background process runs." ; }
-	virtual LockType locktype() const { return NONE; }
-	virtual void addRequiredPrivileges( const std::string& dbname,
-					    const BSONObj& cmdObj,
-					    std::vector<Privilege>* out) {} // No auth required
-
-	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-	    result.append("numSecs" , PingMonitor::getPingInterval() );
-	    return true;
-	}
-    } checkPingMonitorIntervalCmd;
-
-    class PingMonitorConfCommand : public Command {
-    public:
-	PingMonitorConfCommand() : Command( "pingMonitorConfigure" ) {}
+	PingMonitorConfigureCommand() : Command( "pingMonitorConfigure" ) {}
 	virtual bool slaveOk() const { return true; } //might want to make this false later
 	virtual void help( stringstream &help ) const { help << "Allows adding target networks to run ping monitoring on, and configuring the ping monitor for each network." ; }
 	virtual LockType locktype() const { return NONE; }
@@ -209,14 +74,39 @@ namespace mongo {
 	    vector<BSONElement> targets = cmdObj.getField("targets").Array();
 
 	    for( vector<BSONElement>::iterator i=targets.begin(); i!=targets.end(); ++i){
-		BSONElement be = *it;
-		BSONObject bo = be.embeddedObject();
-		cout << bo.toString() << endl;		
-	    }
+		BSONElement be = *i;
+		BSONObj bo = be.embeddedObject();
+		HostAndPort hp;
+		try{
+		hp = HostAndPort( bo["server"].valuestrsafe() );
+		}
+		catch( DBException& e ){
+		    result.append( bo["server"].valuestrsafe() , "Not a valid host:port pair." );
+		    continue;
+		}
+		if( PingMonitorThreadManager::hasTarget( hp )){
 
+		}
+		else{
+		    bool on = true;
+		    int interval = 15;
+		    string collectionPrefix = "";	
+		    if( bo["on"].trueValue() && bo["on"].isBoolean() )
+			on = bo["on"].boolean();
+		    if( bo["interval"].trueValue() && bo["interval"].isNumber() )
+			interval = bo["interval"].numberInt();
+		    if( bo["collectionPrefix"].trueValue() )
+			collectionPrefix = bo["collectionPrefix"].valuestrsafe(); 
+		    BSONObj newObj = PingMonitorThreadManager::createTarget( hp , on , interval , collectionPrefix );
+		    if( newObj["ok"].boolean() )
+			result.append( bo["server"].valuestrsafe() , newObj.getObjectField("newObjData") );
+		    else
+			result.append( bo["server"].valuestrsafe() , bo["errmsg"].valuestrsafe() );
+		}
+	    }
 	    return true;
 	}
-    } pingMonitorConfCmd;
+    }pingMonitorConfigureCmd;
 
 class ShowPingMonitorResultsCommand : public Command {
     public:
@@ -229,40 +119,9 @@ class ShowPingMonitorResultsCommand : public Command {
 					    std::vector<Privilege>* out) {} // No auth required
 
 	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-
-	    if( ( cmdObj["target"].trueValue() ) ) {
-		string targetString = cmdObj.getStringField("target");
-		try{
-		    HostAndPort newTarget( targetString );
-	        if( PingMonitor::setTarget( newTarget )["ok"].boolean() ){
-			result.append("newTarget" , true ); 
-			PingMonitor::turnOnMonitoring();
-		    }
-		    else{
-			result.append("errmsg" , "Input target is not valid");
-			return false;
-		    }
-		} catch( DBException& e ){}
-	    }
-
-
-	    if( PingMonitor::getTargetIsSet() == false ){
-		result.append( "errmsg" , "Target is not set. Set the target and immediately begin monitoring by including document { 'target' : '<host:port>' } in the pingMonitor command, or set the target but defer monitoring by using the db command { 'setPingMonitorTarget' : '<host:port>' } ." );
-		return false;
-	    }
-	    else if( PingMonitor::getIsMonitoring() == false ){
-		result.append( "errmsg" , "Ping monitoring is not turned on. Turn on using db command { 'turnOnPingMonitoring' : 1 }. In order to turn on monitoring, the monitoring target must be set. Check the target using db command { 'checkPingMonitorTarget' : 1 }. Set or reset the target using db command { 'setPingMonitorTarget' : '<host:port>' }. "  );
-		return false;
-	    } 
-	    else{
-		result.append("target" , PingMonitor::getTarget().toString(true) ); 
-		result.append("output" , PingMonitor::getMonitorResults( ));
-	    }
 	    return true;
 	}
 
     } showPingMonitorResultsCmd;
-       return true;
-    }
 
 }

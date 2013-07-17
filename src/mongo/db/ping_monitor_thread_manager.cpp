@@ -19,21 +19,18 @@
 #include "pch.h"
 
 #include "ping_monitor_thread_manager.h"
-#include "mongo/base/counter.h"
-#include "mongo/db/commands/fsync.h"
+
+#include "mongo/client/connpool.h"
 #include "mongo/db/commands/server_status.h"
-#include "mongo/db/databaseholder.h"
 #include "mongo/db/instance.h"
-#include "mongo/db/ops/delete.h"
 #include "mongo/db/repl/is_master.h"
-#include "mongo/util/background.h"
-#include <sstream>
 
 namespace mongo {
 
     // PingMonitorThreadManager
 
     HostAndPort PingMonitorThreadManager::self;
+    bool PingMonitorThreadManager::selfSet;
 
     // map of all targets and their monitoring settings
 
@@ -50,6 +47,11 @@ namespace mongo {
     BSONObj PingMonitorThreadManager::getAllTargets(){
 	return BSONObj();
     }
+
+    BSONObj PingMonitorThreadManager::getInfo(){
+	return BSONObj();
+    }
+
 
     //TODO , DON'T call other get functions from within; use iterator once for all
     // possibly call getTargetInfo() from PingMonitor
@@ -87,7 +89,7 @@ namespace mongo {
     bool PingMonitorThreadManager::isOn( HostAndPort& hp ){
 	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp );
 	if( i != targets.end() )
-	    return i->second.isOn() )
+	    return i->second.isOn(); 
 	return false;
     } 
 
@@ -150,16 +152,33 @@ namespace mongo {
     // (if not of master of a network, we can't connect to it, etc)
     BSONObj PingMonitorThreadManager::createTarget( HostAndPort& hp , bool on=true , int interval=15 , string customCollectionPrefix="" ){
 	BSONObjBuilder toReturn;
-	BSONObj connInfo;
-	if( (connInfo = canConnect( hp ))["ok"].boolean() ){
+	BSONObj connInfo = canConnect( hp );
+
+	// check if we can connect to the host
+	if( connInfo["ok"].boolean() ){
+	    
 	    BSONObj netInfo = determineNetworkType( hp );
+
+	    // check if host is master of a network, and if so what type of network (cluster, replset)
 	    if( netInfo["networkType"].trueValue() ){
-		if( customCollectionPrefix.empty() )
+
+		// retrieve custom settings from user if requested, otherwise use defaults
+    		if( customCollectionPrefix.empty() )
 		    customCollectionPrefix = netInfo["collectionPrefix"].valuestrsafe();
 		if( selfSet == false )
 		    self = findSelf();
+
+		// store the new PingMonitor object's settings in a BSONObj to return to the user
+		BSONObjBuilder newObjData;
+		newObjData.append( "on" , on );
+		newObjData.append( "interval" , interval );
+		newObjData.append( "collectionPrefix" , customCollectionPrefix );
+
+		// actually create the new PingMonitor object
 		PingMonitor *pmt = new PingMonitor( hp , self , on , interval , customCollectionPrefix , netInfo["networkType"] );
+		pmt->go();
 		toReturn.append("ok" , true);
+		toReturn.append("newObjData" , newObjData.obj() );
 		return toReturn.obj();
 	    }
 	    else{
@@ -180,8 +199,8 @@ namespace mongo {
     }
 
     HostAndPort PingMonitorThreadManager::findSelf(){
-	selfSet = true;
-	//TODO: make actual self, this is only for testing
+
+	//TODO: actually find self, this is only for testing
     /*
         struct addrinfo *info, *p;
         int gai_result;
@@ -198,22 +217,24 @@ namespace mongo {
             printf("hostname: %s\n" , p->ai_canonname);
         }
     */
-
+	//selfSet = true;
 	HostAndPort hp( "localhost:27017" );
+	self = hp;
 	return hp;
     }
 
     BSONObj PingMonitorThreadManager::canConnect( HostAndPort& hp ){
+	BSONObjBuilder toReturn;
 	try{
 	    ScopedDbConnection conn( hp.toString() , socketTimeout );
 	    conn.done();
 	    toReturn.append( "ok" , true );
-	    return true; 
+	    return toReturn.obj(); 
 	}
 	catch( UserException& e){
 	    toReturn.append( "ok" , false );
 	    toReturn.append( "exceptionMsg" , e.toString() );
-	    return false;
+	    return toReturn.obj();
 	}
     }
 

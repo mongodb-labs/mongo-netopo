@@ -22,8 +22,6 @@
 
 #include "ping_monitor.h"
 #include "mongo/util/net/hostandport.h"
-#include "boost/thread/mutex.hpp"
-#include "boost/thread/thread.hpp"
 #include "mongo/client/dbclientinterface.h"
 
  namespace mongo {
@@ -34,46 +32,50 @@
         PingMonitorThreadManager(){}
         virtual ~PingMonitorThreadManager(){}
         virtual string name() const { return "PingMonitorThreadManager"; }
-
 	//for all targets
 
 	static BSONObj getAllTargets();
 	static BSONObj getAllTargetsWithInfo();
 	static void clearAllHistory();
-
+	static BSONObj getInfo();
+	
 	//for a specific target
 
 	// if self is not set, determine own HostAndPort
 	// calls PingMonitor() constructor
-	static BSONObj createTarget( HostAndPort& hp , bool on=true , int interval=15 , string collectionPrefix="" );
+	static BSONObj createTarget( HostAndPort& , bool on/*=true*/ , int interval/*=15*/ , string collectionPrefix/*=""*/ );
 
 	// accessor methods
 
- 	static bool hasTarget( HostAndPort& hp );
-	static bool isOn( HostAndPort& hp );
-	static BSONObj getInfo( HostAndPort& hp );
-	static BSONObj getNetworkType( HostAndPort& hp );
-	static BSONObj getCollectionPrefix( HostAndPort& hp );
-	static int getInterval( HostAndPort& hp ); 
-	static BSONObj getMonitorResults( HostAndPort& hp );
+ 	static bool hasTarget( HostAndPort& );
+	static bool isOn( HostAndPort& );
+	static BSONObj getTargetInfo( HostAndPort& );
+	static BSONObj getNetworkType( HostAndPort& );
+	static BSONObj getCollectionPrefix( HostAndPort& );
+	static int getInterval( HostAndPort& ); 
+	static BSONObj getMonitorResults( HostAndPort& );
 
 	// setter methods
 
-	static bool setInterval( HostAndPort& hp , int nsecs );
-	static bool turnOn( HostAndPort& hp );
-	static bool turnOff( HostAndPort& hp );
-	static void clearHistory( HostAndPort& hp );
+	static bool setInterval( HostAndPort& , int );
+	static bool turnOn( HostAndPort& );
+	static bool turnOff( HostAndPort& );
+	static void clearHistory( HostAndPort& );
 
     private:
 
 	static map< HostAndPort , PingMonitor > targets;
-	bool selfSet;
-	HostAndPort self;
+	
+	static HostAndPort self;
+	static bool selfSet;
 
-	static bool canConnect( HostAndPort& hp );
+	static HostAndPort findSelf(); 
+
+	static const double socketTimeout = 30.0;
+
+	static BSONObj canConnect( HostAndPort& hp );
 	static BSONObj determineNetworkType( HostAndPort& hp );
-	//TODO:
-	static HostAndPort findSelf();
-    };
+
+   };
 
 }

@@ -218,6 +218,7 @@ commonFiles = [ "pch.cpp",
                 "client/syncclusterconnection.cpp",
                 "db/dbmessage.cpp",
 		"db/ping_monitor.cpp",
+		"db/ping_monitor_thread_manager.cpp",
                 ]
 
 extraCommonLibdeps = []
@@ -701,6 +702,7 @@ mongodAndMongosFiles = [
     "db/initialize_server_global_state.cpp",
     "db/server_extra_log_context.cpp",
     "util/net/message_server_port.cpp",
+    "db/commands/pingmonitor.cpp",
     ]
 env.StaticLibrary("mongodandmongos", mongodAndMongosFiles)
 
