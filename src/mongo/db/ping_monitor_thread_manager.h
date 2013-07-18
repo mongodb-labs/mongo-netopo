@@ -34,16 +34,18 @@
         virtual string name() const { return "PingMonitorThreadManager"; }
 	//for all targets
 
-	static BSONObj getAllTargets();
 	static BSONObj getAllTargetsWithInfo();
 	static void clearAllHistory();
-	static BSONObj getInfo();
+	static BSONObj getManagerInfo();
 	
 	//for a specific target
 
 	// if self is not set, determine own HostAndPort
 	// calls PingMonitor() constructor
 	static BSONObj createTarget( HostAndPort& , bool on/*=true*/ , int interval/*=15*/ , string collectionPrefix/*=""*/ );
+	static bool amendTarget( HostAndPort& , bool _on );
+	static bool amendTarget( HostAndPort& , int _interval ); 
+	static bool removeTarget( HostAndPort& );
 
 	// accessor methods
 
@@ -55,16 +57,11 @@
 	static int getInterval( HostAndPort& ); 
 	static BSONObj getMonitorResults( HostAndPort& );
 
-	// setter methods
-
-	static bool setInterval( HostAndPort& , int );
-	static bool turnOn( HostAndPort& );
-	static bool turnOff( HostAndPort& );
 	static void clearHistory( HostAndPort& );
 
     private:
 
-	static map< HostAndPort , PingMonitor > targets;
+	static map< HostAndPort , PingMonitor* > targets;
 	
 	static HostAndPort self;
 	static bool selfSet;

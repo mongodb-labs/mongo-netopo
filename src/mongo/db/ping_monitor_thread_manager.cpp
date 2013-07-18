@@ -34,21 +34,19 @@ namespace mongo {
 
     // map of all targets and their monitoring settings
 
-    map< HostAndPort , PingMonitor > PingMonitorThreadManager::targets; 
+    map< HostAndPort , PingMonitor* > PingMonitorThreadManager::targets; 
 
     // Retrieval commands 
 
     //TODO
     BSONObj PingMonitorThreadManager::getAllTargetsWithInfo(){
-	return BSONObj(); 
+	BSONObjBuilder toReturn;
+	for( map< HostAndPort , PingMonitor* >::iterator i = targets.begin(); i!= targets.end(); ++i)
+	    toReturn.append( i->first.toString() , i->second->getInfo() );	
+	return toReturn.obj();
     } 
 
-    //TODO
-    BSONObj PingMonitorThreadManager::getAllTargets(){
-	return BSONObj();
-    }
-
-    BSONObj PingMonitorThreadManager::getInfo(){
+    BSONObj PingMonitorThreadManager::getManagerInfo(){
 	return BSONObj();
     }
 
@@ -56,7 +54,11 @@ namespace mongo {
     //TODO , DON'T call other get functions from within; use iterator once for all
     // possibly call getTargetInfo() from PingMonitor
     BSONObj PingMonitorThreadManager::getTargetInfo( HostAndPort& hp ){
-	return BSONObj();
+    	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
+	if( i != targets.end() )
+	    return BSON( "ok" << true << "info" << i->second->getInfo() );
+	else
+	    return BSON( "ok" << false << "errmsg" << /*TODO: improve errmsg*/ "target not set" );
     }
 
     bool PingMonitorThreadManager::hasTarget( HostAndPort& hp ){
@@ -66,9 +68,9 @@ namespace mongo {
     // includes an "errmsg" field if hp is not a monitoring target
     BSONObj PingMonitorThreadManager::getNetworkType( HostAndPort& hp ){
 	BSONObjBuilder toReturn;
-	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp );
+	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
 	if( i != targets.end() )
-	    toReturn.append( "networkType" , i->second.getNetworkType() );
+	    toReturn.append( "networkType" , i->second->getNetworkType() );
 	else
 	    toReturn.append( "errmsg" , /*TODO: improve errmsg*/ "target not set" );
 	return toReturn.obj();
@@ -77,9 +79,9 @@ namespace mongo {
     // includes an "errmsg" field if hp is not a monitoring target
     BSONObj PingMonitorThreadManager::getCollectionPrefix( HostAndPort& hp ){
     	BSONObjBuilder toReturn;
-	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp );
+	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
 	if( i != targets.end() )
-	    toReturn.append( "collectionPrefix" , i->second.getCollectionPrefix() );
+	    toReturn.append( "collectionPrefix" , i->second->getCollectionPrefix() );
 	else
 	    toReturn.append( "errmsg" , /*TODO: improve errmsg*/ "target not set" );
 	return toReturn.obj();
@@ -87,30 +89,9 @@ namespace mongo {
 
     // returns false if hp is not being monitored, ALSO if hp is not a monitoring target
     bool PingMonitorThreadManager::isOn( HostAndPort& hp ){
-	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp );
+	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
 	if( i != targets.end() )
-	    return i->second.isOn(); 
-	return false;
-    } 
-
-    // returns false if hp is not a monitoring target
-    bool PingMonitorThreadManager::turnOn( HostAndPort& hp ){
-	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp ); 
-    	if( i != targets.end() ){
-	    i->second.turnOn(); 
-	    return true;
-	}
-	return false;
-    } 
-
-    // stops monitoring process but does not reset target or clear monitoring history
-    // returns false if hp is not a monitoring target
-    bool PingMonitorThreadManager::turnOff( HostAndPort& hp ){
-	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp );
-	if( i != targets.end() ){
-	    i->second.turnOff(); 
-	    return true;
-	}
+	    return i->second->isOn(); 
 	return false;
     } 
 
@@ -119,33 +100,37 @@ namespace mongo {
 
     }
  
-    // if returns false, then hp is not a monitoring target
-    bool PingMonitorThreadManager::setInterval( HostAndPort& hp , int nsecs ){ 
-	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp );
-	if( i != targets.end() ){ 
-	    i->second.setInterval( nsecs );
-	    return true;
-	}
-	return false; 
-    }
-
     // if returns -1, then hp is not a monitoring target
     int PingMonitorThreadManager::getInterval( HostAndPort& hp ){
-	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp );
+	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
 	if( i != targets.end() )
-	    return i->second.getInterval();
+	    return i->second->getInterval();
 	return -1; 
     }
 
     // Retrieve from ping monitor storage database
     BSONObj PingMonitorThreadManager::getMonitorResults( HostAndPort& hp ){ 
     	BSONObjBuilder toReturn;
-	map< HostAndPort , PingMonitor >::iterator i = targets.find( hp );
+	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
 	if( i != targets.end() )
-	    toReturn.append( "results" , i->second.getMonitorInfo() );
+	    toReturn.append( "results" , i->second->getMonitorInfo() );
 	else
 	    toReturn.append( "errmsg" , /*TODO: improve errmsg*/ "target not set" );
 	return toReturn.obj();
+    }
+
+    bool PingMonitorThreadManager::removeTarget( HostAndPort& hp ){
+	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
+	if( i != targets.end() ){
+	    // TODO: stop backgroundjob before deleting?
+	    // TODO: clear history for this target
+	    PingMonitor *pmt = i->second;
+	    delete pmt; 
+	    targets.erase(i);
+	    return true;
+	}
+	else
+	    return false;
     }
 
     // returns errmsg if target is invalid 
@@ -165,20 +150,15 @@ namespace mongo {
 		// retrieve custom settings from user if requested, otherwise use defaults
     		if( customCollectionPrefix.empty() )
 		    customCollectionPrefix = netInfo["collectionPrefix"].valuestrsafe();
+
+		// retrieve own HostAndPort to store ping monitor data
 		if( selfSet == false )
 		    self = findSelf();
-
-		// store the new PingMonitor object's settings in a BSONObj to return to the user
-		BSONObjBuilder newObjData;
-		newObjData.append( "on" , on );
-		newObjData.append( "interval" , interval );
-		newObjData.append( "collectionPrefix" , customCollectionPrefix );
-
-		// actually create the new PingMonitor object
-		PingMonitor *pmt = new PingMonitor( hp , self , on , interval , customCollectionPrefix , netInfo["networkType"] );
+		// create the new PingMonitor* object
+		PingMonitor *pmt = new PingMonitor( hp , self , on , interval , customCollectionPrefix , netInfo["networkType"].valuestrsafe() );
 		pmt->go();
+		targets[ hp ] = pmt;
 		toReturn.append("ok" , true);
-		toReturn.append("newObjData" , newObjData.obj() );
 		return toReturn.obj();
 	    }
 	    else{
@@ -196,6 +176,26 @@ namespace mongo {
 	    toReturn.append("exceptionMsg" , connInfo["exceptionMsg"] );
 	}
 	return toReturn.obj();	    
+    }
+
+    bool PingMonitorThreadManager::amendTarget( HostAndPort& hp , bool _on ){
+	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
+	if( i != targets.end() ){
+	    i->second->setOn( _on );
+	    return true;
+	}
+	else
+	    return false;
+    }
+
+    bool PingMonitorThreadManager::amendTarget( HostAndPort& hp , int _interval ){
+	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
+	if( i != targets.end() ){
+	    i->second->setInterval( _interval );
+	    return true;
+	}
+	else
+	    return false;
     }
 
     HostAndPort PingMonitorThreadManager::findSelf(){
@@ -244,25 +244,30 @@ namespace mongo {
     BSONObj PingMonitorThreadManager::determineNetworkType( HostAndPort& hp ){
 	BSONObjBuilder toReturn;
 	BSONObj ismasterResults;
-	try{
-	    ScopedDbConnection conn( hp.toString() , socketTimeout );
+
+        scoped_ptr<ScopedDbConnection> connPtr;
+        try{
+            connPtr.reset( new ScopedDbConnection( hp.toString() , socketTimeout ) ); 
+            ScopedDbConnection& conn = *connPtr;
+
 	    conn->runCommand( "admin" , BSON("isMaster"<<1) , ismasterResults );
 	    if( ismasterResults["msg"].trueValue() ){
 		toReturn.append( "networkType" , "shardedCluster" );
-		BSONObj statusResults;
-		conn->runCommand( "admin" , BSON("status"<<1) , statusResults );	
-		toReturn.append( "collectionPrefix" ,  statusResults.getObjectField("sharding-version")["clusterId"].__oid().toString()); 
+		scoped_ptr<DBClientCursor> cursor( conn->query( "config.version" , BSONObj() ) );
+		toReturn.append( "collectionPrefix" ,  cursor->next()["clusterId"].__oid().toString()); 
+
 	    }
 	    if( ismasterResults["setName"].trueValue() ){
 		toReturn.append( "networkType" , "replicaSet" );
 		toReturn.append( "collectionPrefix" , ismasterResults["setName"].valuestrsafe() );
 	    }
-	    conn.done();
+	    
 	}
 	catch( DBException& e ){
 	    return toReturn.obj();
 	}
-       return toReturn.obj();
+	connPtr->done();
+	return toReturn.obj();
     }
 
 } 

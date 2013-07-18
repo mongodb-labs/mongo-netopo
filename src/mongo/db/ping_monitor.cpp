@@ -31,6 +31,7 @@
 #include <boost/tokenizer.hpp>
 #include <unistd.h>
 #include <sstream>
+#include "boost/date_time/posix_time/posix_time.hpp"
 
 namespace mongo {
 
@@ -56,7 +57,14 @@ namespace mongo {
 
     //TODO , call other get functions from within
     BSONObj PingMonitor::getInfo(){
-	return BSONObj();
+	BSONObjBuilder toReturn;
+	toReturn.append( "networkType" , networkType );
+	toReturn.append( "intervalSecs" , interval );
+	toReturn.append( "collectionPrefix" , collectionPrefix );
+	toReturn.append( "on" , on );
+	toReturn.append( "numPingsDone" , numPings );
+	toReturn.append( "lastPingNetworkMillis" , lastPingNetworkMillis );
+	return toReturn.obj();
     }
 
     string PingMonitor::getNetworkType(){
@@ -70,6 +78,10 @@ namespace mongo {
     int PingMonitor::getInterval(){
 	return interval; 
     }
+
+    int PingMonitor::getNumPings(){
+	return numPings;
+    }
  
     bool PingMonitor::setInterval( int nsecs ){ 
 	interval = nsecs;
@@ -80,14 +92,10 @@ namespace mongo {
 	return on;
     } 
 
-    bool PingMonitor::turnOn(){
-	on = true;
-	return true;
-    } 
-
-    // stops monitoring process but does not reset target or clear monitoring history
-    bool PingMonitor::turnOff(){
-	on = false;
+    // starts/stops monitoring process but does not reset target or clear monitoring history
+    // thread continues to spin in the background
+    bool PingMonitor::setOn( bool _on ){
+	on = _on;
 	return true;
     } 
 
@@ -155,6 +163,7 @@ namespace mongo {
     
 
     void PingMonitor::doPingForTarget(){
+
 	if( on == false )
 	    return;
 
@@ -182,6 +191,7 @@ namespace mongo {
 
 	BSONObjBuilder resultBuilder;
 	resultBuilder.append( "target" , target.toString(true) );
+
 
 	BSONObjBuilder nodesBuilder, edgesBuilder, idMapBuilder;
 	BSONObj nodes, edges, idMap, errors, warnings;
@@ -217,9 +227,11 @@ namespace mongo {
 	    ScopedDbConnection conn( target.toString() , socketTimeout); 
 	    conn->insert( "test.pingmonitor" , resultBuilder.obj() );
 	    conn.done();
+	    numPings++;
 	} catch( DBException& e ){
 	    //TODO
-	} 
+	}
+ 
     }
 
     void PingMonitor::addNewNodes( HostAndPort& target , BSONObj& nodes ){
@@ -259,6 +271,7 @@ namespace mongo {
 	    ScopedDbConnection conn( hp.toString() );
 	    conn->runCommand( db, BSON(cmdName<<1) , cmdReturned );
 	    newHost.append( cmdName , cmdReturned );
+	    conn.done();
 	}
 	catch( DBException& e){
 	    newHost.append( cmdName , e.toString() );
@@ -289,7 +302,6 @@ namespace mongo {
 
     int PingMonitor::getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 	scoped_ptr<ScopedDbConnection> connPtr;
-	auto_ptr<DBClientCursor> cursor;
 	try{
 	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
 	    ScopedDbConnection& conn = *connPtr;
@@ -371,7 +383,7 @@ namespace mongo {
 	try{
 	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
 	    ScopedDbConnection& conn = *connPtr;
-	    scoped_ptr<DBClientCursor> cursor( conn->query( "config.shards" , BSONObj() ) ) ;
+	    scoped_ptr<DBClientCursor> cursor( conn->query( "config.mongos" , BSONObj() ) ) ;
 	    while( cursor->more()){
 		BSONObj p = cursor->next();
 		string hostField = p.getStringField("_id");
@@ -426,6 +438,7 @@ namespace mongo {
 	set< string > tgtNodeIds;
 	nodes.getFieldNames( srcNodeIds );
 	nodes.getFieldNames( tgtNodeIds );
+
 	for (set<string>::iterator srcId = srcNodeIds.begin(); srcId!=srcNodeIds.end(); ++srcId){
 	    BSONElement srcElem = nodes[ *srcId ];
 	    BSONObj srcObj = srcElem.embeddedObject();
@@ -445,7 +458,6 @@ namespace mongo {
 			BSONObj hostArray = BSON( "0" << tgtHostName );
 			BSONObj pingCmd = BSON(  "ping" << 1 << "hosts" << hostArray ); 
 			conn->runCommand( "admin" , pingCmd , cmdReturned );	
-			
 		    }
 		    catch ( DBException& e ){ 
 			newEdge.append( "isConnected" , "false" );
@@ -623,15 +635,26 @@ namespace mongo {
 */
 
     void PingMonitor::run() {
+	lastPingNetworkMillis = 0;
 	while ( ! inShutdown() ) {
-	    LOG(3) << "PingMonitor thread awake" << endl;
-	    if( false /*lockedForWriting()*/ ) {
+	    LOG(3) << "PingMonitor thread for " << target.toString() << "  awake" << endl;
+	    /*
+	    if( lockedForWriting() ) {
 		// note: this is not perfect as you can go into fsync+lock between
 		// this and actually doing the delete later
 		LOG(3) << " locked for writing" << endl;
 		continue;
 	    }
-	    doPingForTarget();
+	    */
+
+	    //ping the network and time it
+	    using namespace boost::posix_time;
+	    ptime time_start(microsec_clock::local_time());
+	    /*>>>*/ doPingForTarget(); /*<<<*/
+	    ptime time_end(microsec_clock::local_time());
+	    time_duration duration(time_end - time_start);
+	    lastPingNetworkMillis = duration.total_milliseconds();
+	    
     	    sleepsecs( interval );
 	}
     }

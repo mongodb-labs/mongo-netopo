@@ -84,24 +84,41 @@ namespace mongo {
 		    result.append( bo["server"].valuestrsafe() , "Not a valid host:port pair." );
 		    continue;
 		}
-		if( PingMonitorThreadManager::hasTarget( hp )){
-
+		// delete exisitng target 
+		if( bo["remove"].trueValue() ){
+		    if( PingMonitorThreadManager::hasTarget( hp ) ){
+			PingMonitorThreadManager::removeTarget( hp );
+			result.append( bo["server"].valuestrsafe() , "Fully deleted from system" );
+		    }
+		    else
+			result.append( bo["server"].valuestrsafe() , "Server does not exist amongst monitoring targets" );
 		}
+		// update target settings
+		else if( PingMonitorThreadManager::hasTarget( hp ) ){
+		    if( bo.getField("on").eoo() == false ){
+			PingMonitorThreadManager::amendTarget( hp , bo.getBoolField("on") );
+		    }
+		    if( bo["interval"].trueValue() && bo["interval"].isNumber() )
+			PingMonitorThreadManager::amendTarget( hp , bo["interval"].numberInt() );		    
+		    result.append( bo["server"].valuestrsafe() , PingMonitorThreadManager::getTargetInfo( hp )["info"].embeddedObject() );
+		}
+		// create new target
 		else{
 		    bool on = true;
 		    int interval = 15;
 		    string collectionPrefix = "";	
-		    if( bo["on"].trueValue() && bo["on"].isBoolean() )
-			on = bo["on"].boolean();
+		    if( bo.getField("on").eoo() == false )
+			on = bo.getBoolField("on");
 		    if( bo["interval"].trueValue() && bo["interval"].isNumber() )
 			interval = bo["interval"].numberInt();
 		    if( bo["collectionPrefix"].trueValue() )
 			collectionPrefix = bo["collectionPrefix"].valuestrsafe(); 
-		    BSONObj newObj = PingMonitorThreadManager::createTarget( hp , on , interval , collectionPrefix );
-		    if( newObj["ok"].boolean() )
-			result.append( bo["server"].valuestrsafe() , newObj.getObjectField("newObjData") );
+		    BSONObj success = PingMonitorThreadManager::createTarget( hp , on , interval , collectionPrefix );
+		    if( success["ok"].boolean() ){
+			result.append( bo["server"].valuestrsafe() , PingMonitorThreadManager::getTargetInfo( hp )["info"].embeddedObject() );
+		    }
 		    else
-			result.append( bo["server"].valuestrsafe() , bo["errmsg"].valuestrsafe() );
+			result.append( bo["server"].valuestrsafe() , success["errmsg"].valuestrsafe() );
 		}
 	    }
 	    return true;

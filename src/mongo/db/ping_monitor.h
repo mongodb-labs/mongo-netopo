@@ -40,6 +40,7 @@
 	    interval = _interval;
 	    collectionPrefix = _collectionPrefix; 
 	    networkType = _networkType;
+	    numPings = 0;
 	}
 
         virtual ~PingMonitor(){}
@@ -49,10 +50,10 @@
 	string getNetworkType();
 	string getCollectionPrefix();
 	int getInterval(); 
+	int getNumPings();
 	bool setInterval( int nsecs );
 	bool isOn();
-	bool turnOn();
-	bool turnOff();
+	bool setOn( bool _on );
 	void clearHistory();
  
 	BSONObj getMonitorInfo();
@@ -75,7 +76,10 @@
 	int interval;
 	string collectionPrefix;		
     	string networkType;
+	int numPings;
+	long long lastPingNetworkMillis;
 
+	
     	virtual void run();
 	void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
 	void doPingForReplset();
