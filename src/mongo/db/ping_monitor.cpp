@@ -617,9 +617,11 @@ namespace mongo {
 		    connPtr.reset( new ScopedDbConnection( srcHostName , socketTimeout ) );
 		    ScopedDbConnection& conn = *connPtr;
 		    try{
-			BSONObj hostArray = BSON( "0" << tgtHostName );
-			BSONObj pingCmd = BSON(  "ping" << 1 << "hosts" << hostArray ); 
-			cout << pingCmd.toString() << endl;
+			BSONObjBuilder pingCmdBuilder;
+			pingCmdBuilder.append( "ping" , 1 );
+			BSONObj hostObj = BSON( "0" << tgtHostName );
+			pingCmdBuilder.appendArray( "hosts" , hostObj );
+			BSONObj pingCmd = pingCmdBuilder.obj();
 			conn->runCommand( "admin" , pingCmd , cmdReturned );	
 		    }
 		    catch ( DBException& e ){ 
