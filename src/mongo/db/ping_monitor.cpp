@@ -55,7 +55,6 @@ namespace mongo {
 
     // Retrieval commands 
 
-    //TODO , call other get functions from within
     BSONObj PingMonitor::getInfo(){
 	BSONObjBuilder toReturn;
 	toReturn.append( "networkType" , networkType );
@@ -99,9 +98,16 @@ namespace mongo {
 	return true;
     } 
 
-    //TODO
+    //TODO: write drop collection query
     void PingMonitor::clearHistory(){
+	try{
+	    ScopedDbConnection conn( self.toString() , socketTimeout );
+	    conn->query( writeLocation , Query( BSON( "drop" << 1 ) ) ); 
+	    conn.done();
+	}
+	catch( DBException& e){
 
+	}
     }
 
    
@@ -112,16 +118,18 @@ namespace mongo {
 	scoped_ptr<ScopedDbConnection> connPtr;
 	auto_ptr<DBClientCursor> cursor;
 	try{
-	    connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) ); //TODO: save self
+	    connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) ); 
 	    ScopedDbConnection& conn = *connPtr;
 	    // sort snapshots in reverse chronological order
 	    // to ensure the first returned is the lastest
 	    scoped_ptr<DBClientCursor> cursor( conn->query( writeLocation , Query(BSONObj()).sort("_id",-1)) ) ;
+	    connPtr->done(); 
 	    if( cursor->more() )
 		latestMonitorInfo = cursor->next();
-	    else
+	    else{
 		toReturn.append( "errmsg" , ERRCODES["NO_DATA"] );
-	    connPtr->done(); 
+		return toReturn.obj();
+	    }
 	}
 	catch( DBException& e ){
 	    toReturn.append("errmsg" , e.toString() );
@@ -611,11 +619,12 @@ namespace mongo {
 		    try{
 			BSONObj hostArray = BSON( "0" << tgtHostName );
 			BSONObj pingCmd = BSON(  "ping" << 1 << "hosts" << hostArray ); 
+			cout << pingCmd.toString() << endl;
 			conn->runCommand( "admin" , pingCmd , cmdReturned );	
 		    }
 		    catch ( DBException& e ){ 
 			newEdge.append( "isConnected" , "false" );
-			newEdge.append( "errmsg" , /*TODO*/" " );
+			newEdge.append( "errmsg" , e.toString() );
 			continue;
 		    } 
 		    connPtr->done();

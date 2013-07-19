@@ -71,60 +71,65 @@ namespace mongo {
 		return false;
 	    }
 
-	    vector<BSONElement> targets = cmdObj.getField("targets").Array();
+	    if( cmdObj.getObjectField("targets").couldBeArray() ){
+		vector<BSONElement> targets = cmdObj.getField("targets").Array();
 
-	    for( vector<BSONElement>::iterator i=targets.begin(); i!=targets.end(); ++i){
-		BSONElement be = *i;
-		BSONObj bo = be.embeddedObject();
-		HostAndPort hp;
-		try{
-		    hp = HostAndPort( bo["server"].valuestrsafe() );
-		}
-		catch( DBException& e ){
-		    result.append( bo["server"].valuestrsafe() , "Not a valid host:port pair." );
-		    continue;
-		}
-		// delete exisitng target 
-		if( bo["remove"].trueValue() ){
-		    if( PingMonitorThreadManager::hasTarget( hp ) ){
-			PingMonitorThreadManager::removeTarget( hp );
-			result.append( bo["server"].valuestrsafe() , "Fully deleted from system" );
+		for( vector<BSONElement>::iterator i=targets.begin(); i!=targets.end(); ++i){
+		    BSONElement be = *i;
+		    BSONObj bo = be.embeddedObject();
+		    HostAndPort hp;
+		    try{
+			hp = HostAndPort( bo["server"].valuestrsafe() );
 		    }
-		    else
-			result.append( bo["server"].valuestrsafe() , "Server does not exist amongst monitoring targets" );
-		}
-		// update target settings
-		else if( PingMonitorThreadManager::hasTarget( hp ) ){
-		    if( bo["collectionPrefix"].trueValue() ){
-			result.append( bo["server"].valuestrsafe() , "Cannot reset collectionPrefix. To use this prefix, ensure no other target is using it and then remove this target using db.runCommand( { pingMonitorConfigure : 1 , targets : [ { server : <host:port> , remove : true } ] } ) , then re-create the target with the desired collectionPrefix. Warning: by doing this, all monitoring data up to this point will be lost." );	    
+		    catch( DBException& e ){
+			result.append( bo["server"].valuestrsafe() , "Not a valid host:port pair." );
 			continue;
 		    }
-		    if( bo.getField("on").eoo() == false ){
-			PingMonitorThreadManager::amendTarget( hp , bo.getBoolField("on") );
+		    // delete exisitng target 
+		    if( bo["remove"].trueValue() ){
+			if( PingMonitorThreadManager::hasTarget( hp ) ){
+			    PingMonitorThreadManager::removeTarget( hp );
+			    result.append( bo["server"].valuestrsafe() , "Fully deleted from system" );
+			}
+			else
+			    result.append( bo["server"].valuestrsafe() , "Server does not exist amongst monitoring targets" );
 		    }
-		    if( bo["interval"].trueValue() && bo["interval"].isNumber() )
-			PingMonitorThreadManager::amendTarget( hp , bo["interval"].numberInt() );		    
-		    result.append( bo["server"].valuestrsafe() , PingMonitorThreadManager::getTargetInfo( hp )["info"].embeddedObject() );
-		}
-		// create new target
-		else{
-		    bool on = true;
-		    int interval = 15;
-		    string collectionPrefix = "";	
-		    if( bo.getField("on").eoo() == false )
-			on = bo.getBoolField("on");
-		    if( bo["interval"].trueValue() && bo["interval"].isNumber() )
-			interval = bo["interval"].numberInt();
-		    if( bo["collectionPrefix"].trueValue() )
-			collectionPrefix = bo["collectionPrefix"].valuestrsafe(); 
-		    BSONObj success = PingMonitorThreadManager::createTarget( hp , on , interval , collectionPrefix );
-		    if( success["ok"].boolean() ){
+		    // update target settings
+		    else if( PingMonitorThreadManager::hasTarget( hp ) ){
+			if( bo["collectionPrefix"].trueValue() ){
+			    result.append( bo["server"].valuestrsafe() , "Cannot reset collectionPrefix. To use this prefix, ensure no other target is using it and then remove this target using db.runCommand( { pingMonitorConfigure : 1 , targets : [ { server : <host:port> , remove : true } ] } ) , then re-create the target with the desired collectionPrefix. Warning: by doing this, all monitoring data up to this point will be lost." );	    
+			    continue;
+			}
+			if( bo.getField("on").eoo() == false ){
+			    PingMonitorThreadManager::amendTarget( hp , bo.getBoolField("on") );
+			}
+			if( bo["interval"].trueValue() && bo["interval"].isNumber() )
+			    PingMonitorThreadManager::amendTarget( hp , bo["interval"].numberInt() );		    
 			result.append( bo["server"].valuestrsafe() , PingMonitorThreadManager::getTargetInfo( hp )["info"].embeddedObject() );
-			continue;
 		    }
-		    else
-			result.append( bo["server"].valuestrsafe() , success["errmsg"].valuestrsafe() );
+		    // create new target
+		    else{
+			bool on = true;
+			int interval = 15;
+			string collectionPrefix = "";	
+			if( bo.getField("on").eoo() == false )
+			    on = bo.getBoolField("on");
+			if( bo["interval"].trueValue() && bo["interval"].isNumber() )
+			    interval = bo["interval"].numberInt();
+			if( bo["collectionPrefix"].trueValue() )
+			    collectionPrefix = bo["collectionPrefix"].valuestrsafe(); 
+			BSONObj success = PingMonitorThreadManager::createTarget( hp , on , interval , collectionPrefix );
+			if( success["ok"].boolean() ){
+			    result.append( bo["server"].valuestrsafe() , PingMonitorThreadManager::getTargetInfo( hp )["info"].embeddedObject() );
+			    continue;
+			}
+			else
+			    result.append( bo["server"].valuestrsafe() , success["errmsg"].valuestrsafe() );
+		    }
 		}
+	    }
+	    else{
+		    result.append("errmsg" , "Invalid input format for targets. Please use an array of JSON documents, for example, db.runCommand( { pingMonitorConfigure : 1 , targets : [ { server : <host:port> , on : true } )." ); 
 	    }
 	    return true;
 	}

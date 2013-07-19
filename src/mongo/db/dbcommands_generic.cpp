@@ -24,7 +24,6 @@
 #include "mongo/client/connpool.h"
 #include <sstream>
 #include "mongo/util/assert_util.h"
-#include "mongo/db/ping_monitor.h"
 
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/dbclient_rs.h"
@@ -150,7 +149,7 @@ namespace mongo {
 	    
 	    //do a simple ping unless a "deep" ping is requested
 	    if(!(cmdObj["hosts"].trueValue()))
-		    return true;
+		return true;
 
 	    using namespace bson;
 	    
@@ -161,7 +160,7 @@ namespace mongo {
 	    string db = "admin";
     
 	    //for each host:port in the array
-	    for(vector<BSONElement>::iterator it = v.begin(), end = v.end(); it!= end; ++it)
+	    for( vector<BSONElement>::iterator it = v.begin(), end = v.end(); it!= end; ++it)
 	    {
 		BSONObjBuilder currServer;
 		HostAndPort hp = it->String();

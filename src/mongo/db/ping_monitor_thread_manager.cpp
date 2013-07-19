@@ -126,9 +126,8 @@ namespace mongo {
     bool PingMonitorThreadManager::removeTarget( HostAndPort& hp ){
 	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
 	if( i != targets.end() ){
-	    // TODO: stop backgroundjob before deleting?
-	    // TODO: clear history for this target
 	    PingMonitor *pmt = i->second;
+	    pmt->clearHistory();
 	    pmt->shutdown();
 	    delete pmt; 
 	    targets.erase(i);
