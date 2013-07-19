@@ -23,6 +23,7 @@
 #include "ping_monitor.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/client/dbclientinterface.h"
+#include "instance.h"
 
  namespace mongo {
     
@@ -55,7 +56,7 @@
 	static BSONObj getNetworkType( HostAndPort& );
 	static BSONObj getCollectionPrefix( HostAndPort& );
 	static int getInterval( HostAndPort& ); 
-	static BSONObj getMonitorResults( HostAndPort& );
+	static BSONObj getMonitorData( HostAndPort& );
 
 	static void clearHistory( HostAndPort& );
 
@@ -63,16 +64,16 @@
 
 	static map< HostAndPort , PingMonitor* > targets;
 	
-	static HostAndPort self;
-	static bool selfSet;
-
-	static HostAndPort findSelf(); 
-
 	static const double socketTimeout = 30.0;
 
 	static BSONObj canConnect( HostAndPort& hp );
 	static BSONObj determineNetworkType( HostAndPort& hp );
 
+	static const string NO_SUCH_TARGET; 
+	static const string INVALID_COLLECTION_CHARACTER;
+	static const string TARGET_NOT_NETWORK_MASTER;
+	static const string ALREADY_USING_COLLECTION;
+	static const string ERRMSG;
    };
 
 }

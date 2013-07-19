@@ -78,7 +78,7 @@ namespace mongo {
 		BSONObj bo = be.embeddedObject();
 		HostAndPort hp;
 		try{
-		hp = HostAndPort( bo["server"].valuestrsafe() );
+		    hp = HostAndPort( bo["server"].valuestrsafe() );
 		}
 		catch( DBException& e ){
 		    result.append( bo["server"].valuestrsafe() , "Not a valid host:port pair." );
@@ -95,6 +95,10 @@ namespace mongo {
 		}
 		// update target settings
 		else if( PingMonitorThreadManager::hasTarget( hp ) ){
+		    if( bo["collectionPrefix"].trueValue() ){
+			result.append( bo["server"].valuestrsafe() , "Cannot reset collectionPrefix. To use this prefix, ensure no other target is using it and then remove this target using db.runCommand( { pingMonitorConfigure : 1 , targets : [ { server : <host:port> , remove : true } ] } ) , then re-create the target with the desired collectionPrefix. Warning: by doing this, all monitoring data up to this point will be lost." );	    
+			continue;
+		    }
 		    if( bo.getField("on").eoo() == false ){
 			PingMonitorThreadManager::amendTarget( hp , bo.getBoolField("on") );
 		    }
@@ -116,6 +120,7 @@ namespace mongo {
 		    BSONObj success = PingMonitorThreadManager::createTarget( hp , on , interval , collectionPrefix );
 		    if( success["ok"].boolean() ){
 			result.append( bo["server"].valuestrsafe() , PingMonitorThreadManager::getTargetInfo( hp )["info"].embeddedObject() );
+			continue;
 		    }
 		    else
 			result.append( bo["server"].valuestrsafe() , success["errmsg"].valuestrsafe() );
@@ -125,20 +130,73 @@ namespace mongo {
 	}
     }pingMonitorConfigureCmd;
 
-class ShowPingMonitorResultsCommand : public Command {
-    public:
-	ShowPingMonitorResultsCommand() : Command( "showPingMonitorResults" ) {}
-	virtual bool slaveOk() const { return true; } //might want to make this false later
-	virtual void help( stringstream &help ) const { help << "Displays results from the background PingMonitor process" ; }
-	virtual LockType locktype() const { return NONE; }
-	virtual void addRequiredPrivileges( const std::string& dbname,
-					    const BSONObj& cmdObj,
-					    std::vector<Privilege>* out) {} // No auth required
+    class PingMonitorSettingsCommand : public Command {
+	public:
+	    PingMonitorSettingsCommand() : Command( "pingMonitorSettings" ) {}
+	    virtual bool slaveOk() const { return true; } //might want to make this false later
+	    virtual void help( stringstream &help ) const { help << "Display the list of current targets and their monitoring settings" ; }
+	    virtual LockType locktype() const { return NONE; }
+	    virtual void addRequiredPrivileges( const std::string& dbname,
+						const BSONObj& cmdObj,
+						std::vector<Privilege>* out) {} // No auth required
 
-	virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-	    return true;
-	}
+	    virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
 
-    } showPingMonitorResultsCmd;
+		// if no specific targets specified, show information about all targets 
+		if( cmdObj["targets"].trueValue() == false ){
+		    result.append("targets" , PingMonitorThreadManager::getAllTargetsWithInfo() );
+		    return true;
+		}
+
+		// else, show informaiton only about specified targets
+		vector<BSONElement> targets = cmdObj.getField("targets").Array();
+		for( vector<BSONElement>::iterator i=targets.begin(); i!=targets.end(); ++i){
+		    BSONElement be = *i;
+		    BSONObj bo = be.embeddedObject();
+		    HostAndPort hp;
+		    try{
+			hp = HostAndPort( bo["server"].valuestrsafe() );
+		    }
+		    catch( DBException& e ){
+			result.append( bo["server"].valuestrsafe() , "Not a valid host:port pair." );
+			continue;
+		    }
+		    result.append( bo["server"].valuestrsafe() , PingMonitorThreadManager::getTargetInfo( hp )["info"].embeddedObject() );
+		}
+		return true;
+	    }
+
+	} PingMonitorSettingsCmd;
+
+    class PingMonitorDataCommand : public Command {
+	public:
+	    PingMonitorDataCommand() : Command( "pingMonitorData" ) {}
+	    virtual bool slaveOk() const { return true; } //might want to make this false later
+	    virtual void help( stringstream &help ) const { help << "Displays results from the background PingMonitor process" ; }
+	    virtual LockType locktype() const { return NONE; }
+	    virtual void addRequiredPrivileges( const std::string& dbname,
+						const BSONObj& cmdObj,
+						std::vector<Privilege>* out) {} // No auth required
+
+	    virtual bool run( const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
+		if( cmdObj["target"].trueValue() ){
+		    HostAndPort hp;
+		    try{
+			hp = HostAndPort( cmdObj["target"].valuestrsafe() );
+		    }
+		    catch( DBException& e ){
+			result.append( cmdObj["target"].valuestrsafe() , "Not a valid host:port pair." );
+			return false;
+		    } 
+		    result.append( cmdObj["target"].valuestrsafe() , PingMonitorThreadManager::getMonitorData( hp ) );
+		}
+		return true;
+	    }
+
+	} PingMonitorDataCmd;
+
+
+
+
 
 }

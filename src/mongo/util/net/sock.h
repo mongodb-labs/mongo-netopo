@@ -173,8 +173,6 @@ namespace mongo {
 	static long long numIncomingExceptions( std::string remoteHost );	
 	static long long numOutgoingExceptions( std::string remoteHost ); 
 	
-	static string forTesting();
-  
     private:
 	
 	static boost::mutex _mutex;

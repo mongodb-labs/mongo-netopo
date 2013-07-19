@@ -26,21 +26,34 @@
 #include "boost/thread/mutex.hpp"
 #include "boost/thread/thread.hpp"
 #include "mongo/client/dbclientinterface.h"
+#include "mongo/db/instance.h"
 
  namespace mongo {
     
     class PingMonitor : public BackgroundJob {
 
+    friend class PingMonitorThreadManager;
+
     public:
-        PingMonitor( HostAndPort& _hp , HostAndPort& _self , bool _on , int _interval , string _collectionPrefix , string _networkType ){
+        PingMonitor( HostAndPort& _hp , bool _on , int _interval , string _collectionPrefix , string _networkType ){
 	    initializeCharts();
-    	    self = _self;
 	    target = _hp;
 	    on = _on;
 	    interval = _interval;
 	    collectionPrefix = _collectionPrefix; 
 	    networkType = _networkType;
 	    numPings = 0;
+
+/*	    BSONObj isMasterResults;
+	    dbc.runCommand( "admin" , BSON("isMaster"<<1) , isMasterResults );
+            if( isMasterResults["msg"].trueValue() )
+                db = "config";
+            if( isMasterResults["setName"].trueValue() )
+                db = "local";
+*/
+
+//	    cout << "my HostAndPort : " << HostAndPort::me().toString() << endl;
+	    alive = true;
 	}
 
         virtual ~PingMonitor(){}
@@ -55,6 +68,7 @@
 	bool isOn();
 	bool setOn( bool _on );
 	void clearHistory();
+	void shutdown();
  
 	BSONObj getMonitorInfo();
 
@@ -63,6 +77,7 @@
 
     private:
 
+	//DBDirectClient dbc;
 	boost::mutex _mutex;
 	static map< string , string > ERRCODES;
    	static map<string,string> initializeErrcodes();
@@ -70,19 +85,41 @@
 	static BSONObj reqConnChart;
 	static BSONObj recConnChart;
 
-	HostAndPort self;
 	HostAndPort target;
 	bool on;
+	bool alive;
 	int interval;
 	string collectionPrefix;		
     	string networkType;
 	int numPings;
 	long long lastPingNetworkMillis;
 
-	
+	// data stored in DBDirectClient's
+	// [local|config].pingMonitor.[clusterId|replsetName].[graphs|stats|deltas]
+	// local if this is a mongod, config if mongos
+	// clusterId if target is shardedCluster, replsetName if target is replicaSet
+	// graphs, stats, and deltas stored for both types
+	string db;
+	static const string outerCollection;
+	static const string graphs;
+	static const string deltas;
+	static const string stats;
+
     	virtual void run();
 	void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
+
+
+	bool writeMonitorData( BSONObj& toWrite );
+
 	void doPingForReplset();
+
+	void getSetServers( HostAndPort& target , BSONObjBuilder& nodesBuilder , map< string , vector<string> >& errorsBuilder , map< string, vector<string> >& warningsBuilder );
+
+	void diagnoseSet( BSONObj& nodes , BSONObj& edges , map< string , vector<string> >& errorsBuilder , map<string,vector<string> >& warningsBuilder );
+
+
+
+
 	void doPingForCluster();
 
 	void addNewNodes( HostAndPort& target , BSONObj& nodes );
@@ -98,6 +135,10 @@
 	void buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 	void buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap );
 	void diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+
+
+    void collectClientInfoHelper( HostAndPort& hp , BSONObjBuilder& newHost , const string& db , string cmdName );
+    void collectClientInfo( string connString , BSONObjBuilder& newHost , BSONObj& type , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 
 	bool isReqConn( const string& src , const string& tgt);
 	bool isRecConn( const string& src , const string& tgt);

@@ -19,12 +19,6 @@
 #include "pch.h"
 
 #include "ping_monitor.h"
-#include "mongo/base/counter.h"
-#include "mongo/db/commands/fsync.h"
-#include "mongo/db/commands/server_status.h"
-#include "mongo/db/databaseholder.h"
-#include "mongo/db/instance.h"
-#include "mongo/db/ops/delete.h"
 #include "mongo/db/repl/is_master.h"
 #include "mongo/util/background.h"
 #include "mongo/client/connpool.h"
@@ -33,13 +27,18 @@
 #include <sstream>
 #include "boost/date_time/posix_time/posix_time.hpp"
 
+#include "mongo/util/net/sock.h";
+
 namespace mongo {
 
     // PingMonitor
 
-//    boost::mutex PingMonitor::_mutex;
     BSONObj PingMonitor::reqConnChart;
     BSONObj PingMonitor::recConnChart;
+    const string PingMonitor::outerCollection = "pingMonitor";
+    const string PingMonitor::graphs = "graphs";
+    const string PingMonitor::deltas = "deltas";
+    const string PingMonitor::stats = "stats";
 
     // Error codes
     map< string , string > PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
@@ -112,7 +111,7 @@ namespace mongo {
 	scoped_ptr<ScopedDbConnection> connPtr;
 	auto_ptr<DBClientCursor> cursor;
 	try{
-	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) ); //TODO: save self
+	    connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) ); //TODO: save self
 	    ScopedDbConnection& conn = *connPtr;
 	    // sort snapshots in reverse chronological order
 	    // to ensure the first returned is the lastest
@@ -121,7 +120,7 @@ namespace mongo {
 	    connPtr->done(); 
 	}
 	catch( DBException& e ){
-	    show.append("errmsg" , "could not retrieve ping monitor information for target");
+	    show.append("errmsg" , e.toString() );
 	    return show.obj();	    	
 	}
 	BSONObjBuilder nodeShow;
@@ -175,7 +174,172 @@ namespace mongo {
 
     void PingMonitor::doPingForReplset(){
 
+	// create a typedef for the Graph type
+	// Add nodes to the graph
+	// Write out the edges in the graph
+	// declare a graph object
+	// add the edges to the graph object
+
+	BSONObjBuilder resultBuilder;
+	resultBuilder.append( "target" , target.toString(true) );
+
+	BSONObjBuilder nodesBuilder, edgesBuilder, idMapBuilder;
+	BSONObj nodes, edges, idMap, errors, warnings;
+	map<string, vector<string> > errorsBuilder, warningsBuilder;
+
+	getSetServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
+	nodes = nodesBuilder.obj();
+
+	buildGraph( nodes , edgesBuilder , errorsBuilder , warningsBuilder );
+	edges = edgesBuilder.obj();
+
+	buildIdMap( nodes , idMapBuilder );
+	idMap = idMapBuilder.obj();
+
+	diagnoseSet( nodes , edges , errorsBuilder , warningsBuilder );
+	errors = convertToBSON( errorsBuilder );
+	warnings = convertToBSON( warningsBuilder );
+
+	resultBuilder.append("nodes" , nodes);   
+	resultBuilder.append("edges" , edges);
+	resultBuilder.append("idMap" , idMap);
+	resultBuilder.append("errors" , errors);
+	resultBuilder.append("warnings" , warnings); 
+	resultBuilder.append("currentTime" , jsTime() );
+
+//	addNewNodes( conn , nodes );
+
+	BSONObj result = resultBuilder.obj();
+	bool written = writeMonitorData( result ); 
+	if( written == false ){
+	    // TODO: Properly log inability to write to self 
+	    cout << "Failed to write PingMonitor data to self" << endl;
+	}
+
+	numPings++;
     }
+
+    bool PingMonitor::writeMonitorData( BSONObj& toWrite ){
+
+	//TODO: choose db based on type of mongo instance
+	db = "test";
+	string writeLocation = db+"."+outerCollection+"."+collectionPrefix+"."+graphs; 
+
+	//TODO: find own HostAndPort more cleanly?
+	string selfHostName = getHostName();
+	int selfPort = cmdLine.port;
+	stringstream ss;
+	ss << selfPort;	
+	HostAndPort self = selfHostName + ":" + ss.str() ;
+
+	try{
+	    ScopedDbConnection conn( self.toString() , socketTimeout); 
+	    conn->insert( writeLocation , toWrite );
+	    conn.done();
+	    numPings++;
+	    return true;
+	} catch( DBException& e ){
+	    return false;
+	}
+    }
+
+    void PingMonitor::getSetServers( HostAndPort& target , BSONObjBuilder& nodesBuilder , map< string , vector<string> >& errorsBuilder , map< string, vector<string> >& warningsBuilder ){
+
+	scoped_ptr<ScopedDbConnection> connPtr;
+	BSONObj cmdReturned;
+	try{ 
+	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
+	    ScopedDbConnection& conn = *connPtr;
+	    try{
+		conn->runCommand( "admin" , BSON("isMaster"<<1) , cmdReturned );	
+	    }
+	    catch ( DBException& e ){
+		// unable to run isMaster command on target
+		// TODO: log this error somewhere
+		return;
+	    } 
+	    connPtr->done();
+	}
+	catch ( UserException ue ){
+		// unable to connect to target
+		// TODO: log this error somewhere
+		return; 
+	}
+
+	int id = 0;
+
+	if( cmdReturned["hosts"].trueValue() ){
+	    vector<BSONElement> hosts = cmdReturned["hosts"].Array();
+	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
+		BSONElement be = *i;
+		string curr = be.valuestrsafe();
+		BSONObjBuilder newHost;
+		newHost.append( "hostName" , curr );
+		newHost.append( "machine" , "" );
+		newHost.append( "key" , curr + "_" + "" + "_" + "mongod" );
+		BSONObj type;
+		if( curr.compare(cmdReturned["primary"].valuestrsafe()) == 0 )
+		    type = BSON( "process" << "mongod" << "role" << "primary" );
+		else
+		    type = BSON( "process" << "mongod" << "role" << "secondary" );
+		newHost.append( "type" , type );
+		collectClientInfo( curr , newHost , type , errorsBuilder , warningsBuilder );
+		char idString[100];
+		sprintf(idString , "%d" , id);
+		nodesBuilder.append( idString , newHost.obj() );
+		id++;
+	    }
+	}	
+
+	if( cmdReturned["passives"].trueValue() ){
+	    vector<BSONElement> hosts = cmdReturned["passives"].Array();
+	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
+		BSONElement be = *i;
+		string curr = be.valuestrsafe();
+		BSONObjBuilder newHost;
+		newHost.append( "hostName" , curr );
+		newHost.append( "machine" , "" );
+		newHost.append( "key" , curr + "_" + "" + "_" + "mongod" );
+		BSONObj type = BSON( "process" << "mongod" << "role" << "passive" );
+		newHost.append( "type" , type );
+		collectClientInfo( curr , newHost , type , errorsBuilder , warningsBuilder );
+		char idString[100];
+		sprintf(idString , "%d" , id);
+		nodesBuilder.append( idString , newHost.obj() );
+		id++;
+	    }
+	}	
+
+	if( cmdReturned["arbiters"].trueValue() ){
+	    vector<BSONElement> hosts = cmdReturned["arbiters"].Array();
+	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
+		BSONElement be = *i;
+		string curr = be.valuestrsafe();
+		BSONObjBuilder newHost;
+		newHost.append( "hostName" , curr );
+		newHost.append( "machine" , "" );
+		newHost.append( "key" , curr + "_" + "" + "_" + "mongod" );
+		BSONObj type = BSON( "process" << "mongod" << "role" << "arbiter" );
+		newHost.append( "type" , type );
+		collectClientInfo( curr , newHost , type , errorsBuilder , warningsBuilder );
+		char idString[100];
+		sprintf(idString , "%d" , id);
+		nodesBuilder.append( idString , newHost.obj() );
+		id++;
+	    }
+	}	
+
+
+
+
+		
+    }
+
+    void PingMonitor::diagnoseSet( BSONObj& nodes , BSONObj& edges , map< string , vector<string> >& errorsBuilder , map<string,vector<string> >& warningsBuilder ){
+
+
+    }
+
 
     void PingMonitor::doPingForCluster(){
 
@@ -223,13 +387,11 @@ namespace mongo {
 
 //	addNewNodes( conn , nodes );
 
-	try{
-	    ScopedDbConnection conn( target.toString() , socketTimeout); 
-	    conn->insert( "test.pingmonitor" , resultBuilder.obj() );
-	    conn.done();
-	    numPings++;
-	} catch( DBException& e ){
-	    //TODO
+	BSONObj result = resultBuilder.obj();
+	bool written = writeMonitorData( result ); 
+	if( written == false ){
+	    // TODO: Properly log inability to write to self 
+	    cout << "Failed to write PingMonitor data to self" << endl;
 	}
  
     }
@@ -265,7 +427,7 @@ namespace mongo {
 	return b.obj();
     }
 
-    void collectClientInfoHelper( HostAndPort& hp , BSONObjBuilder& newHost , const string& db , string cmdName ){
+    void PingMonitor::collectClientInfoHelper( HostAndPort& hp , BSONObjBuilder& newHost , const string& db , string cmdName ){
 	BSONObj cmdReturned;
 	try{
 	    ScopedDbConnection conn( hp.toString() );
@@ -278,7 +440,7 @@ namespace mongo {
 	}
     }
 
-    void collectClientInfo( string connString , BSONObjBuilder& newHost , BSONObj& type , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){	
+    void PingMonitor::collectClientInfo( string connString , BSONObjBuilder& newHost , BSONObj& type , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){	
 
 	HostAndPort hp( connString );
 
@@ -324,7 +486,6 @@ namespace mongo {
 			BSONObjBuilder newHost;
 			newHost.append( "hostName" , currToken );
 			newHost.append( "machine" , "" );
-			newHost.append( "process" , "mongod" );
 			newHost.append( "shardName" , shardName );
 			newHost.append( "key" , currToken + "_" + "" + "_" + "mongod" );
 			BSONObj type;	
@@ -345,7 +506,6 @@ namespace mongo {
 		    BSONObjBuilder newHost;
 		    newHost.append( "hostName" , memberHosts );
 		    newHost.append( "machine" , "" );
-		    newHost.append( "process" , "mongod" );
 		    newHost.append( "shardName" , shardName );
 		    newHost.append( "key" , memberHosts + "_" + "" + "_" + "mongod" );
 		    BSONObj type = BSON( "process" << "mongod" << "role" << "secondary" );
@@ -361,7 +521,6 @@ namespace mongo {
 		    BSONObjBuilder newHost;
 		    newHost.append( "hostName" , p.getStringField("host") );
 		    newHost.append( "machine" , "" );
-		    newHost.append( "process" , "mongod" );
 		    newHost.append( "key" , hostField + "_" + "" + "_" + "mongod" );
 		    BSONObj type = BSON( "process" << "mongod" << "role" << "primary" );
 		    collectClientInfo( HostAndPort(p.getStringField("host")) , newHost , type , errors , warnings );
@@ -392,7 +551,6 @@ namespace mongo {
 		BSONObjBuilder newHost;
 		newHost.append( "hostName" , hostField );
 		newHost.append( "machine" , "" );
-		newHost.append( "process" , "mongos" );
 		newHost.append( "key" , hostField + "_" + "" + "_" + "mongos" );
 		BSONObj type = BSON( "process" << "mongos" << "role" << "mongos" );
 		newHost.append( "type" , type );
@@ -419,7 +577,6 @@ namespace mongo {
 	    BSONObjBuilder newHost;
 	    newHost.append( "hostName" , host );
 	    newHost.append( "machine" , "" );
-	    newHost.append( "process" , "mongod");
 	    newHost.append( "key" , host + "_" + "" + "_" + "mongod" );
 	    BSONObj type = BSON( "process" << "mongod" << "role" << "config" );
 	    newHost.append( "type" , type );
@@ -634,10 +791,21 @@ namespace mongo {
     }
 */
 
+    void PingMonitor::shutdown(){
+	alive = false;
+	bool threadDone = false;
+	int count = 0;
+	while( threadDone == false && count < 10 ){
+	    threadDone = wait( 1000 );
+	    count++;
+	} 
+    }
+
     void PingMonitor::run() {
 	lastPingNetworkMillis = 0;
-	while ( ! inShutdown() ) {
+	while ( ! inShutdown() && alive ) {
 	    LOG(3) << "PingMonitor thread for " << target.toString() << "  awake" << endl;
+
 	    /*
 	    if( lockedForWriting() ) {
 		// note: this is not perfect as you can go into fsync+lock between
