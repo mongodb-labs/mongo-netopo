@@ -27,6 +27,7 @@
 #include "boost/thread/thread.hpp"
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/instance.h"
+#include "mongo/db/cmdline.h"
 
  namespace mongo {
     
@@ -43,6 +44,18 @@
 	    collectionPrefix = _collectionPrefix; 
 	    networkType = _networkType;
 	    numPings = 0;
+
+	    //TODO: find own HostAndPort more cleanly?
+	    string selfHostName = getHostName();
+	    int selfPort = cmdLine.port;
+	    stringstream ss;
+	    ss << selfPort;
+	    self = HostAndPort( selfHostName + ":" + ss.str() );
+
+	    //TODO: choose db based on type of mongo instance
+	    db = "test";
+	    writeLocation = db+"."+outerCollection+"."+collectionPrefix+"."+graphs;
+
 
 /*	    BSONObj isMasterResults;
 	    dbc.runCommand( "admin" , BSON("isMaster"<<1) , isMasterResults );
@@ -86,6 +99,7 @@
 	static BSONObj recConnChart;
 
 	HostAndPort target;
+	HostAndPort self;
 	bool on;
 	bool alive;
 	int interval;
@@ -93,6 +107,7 @@
     	string networkType;
 	int numPings;
 	long long lastPingNetworkMillis;
+	string writeLocation;
 
 	// data stored in DBDirectClient's
 	// [local|config].pingMonitor.[clusterId|replsetName].[graphs|stats|deltas]
@@ -104,7 +119,7 @@
 	static const string graphs;
 	static const string deltas;
 	static const string stats;
-
+	
     	virtual void run();
 	void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
 

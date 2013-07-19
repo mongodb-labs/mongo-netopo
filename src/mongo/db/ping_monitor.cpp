@@ -49,6 +49,7 @@ namespace mongo {
 	m["TARGET_NOT_NETWORK_MASTER"] = "Target is not the master of a network (primary of replica set, mongos instance, or master in master-slave relationship).";
 	m["NOT_ENOUGH_RECORDS"] = "Not enough PingMonitor records to complete this action.";
 	m["CAN'T_MAKE_CLIENT_CONNECTION"] = "Cannot make client connection to host.";
+	m["NO_DATA"] = "No ping monitor data has been collected for this target.";
 	return m;
     };
 
@@ -106,7 +107,7 @@ namespace mongo {
    
     // Retrieve from ping monitor storage database
     BSONObj PingMonitor::getMonitorInfo(){ 
-	BSONObjBuilder show;
+	BSONObjBuilder toReturn;
 	BSONObj latestMonitorInfo;
 	scoped_ptr<ScopedDbConnection> connPtr;
 	auto_ptr<DBClientCursor> cursor;
@@ -115,13 +116,16 @@ namespace mongo {
 	    ScopedDbConnection& conn = *connPtr;
 	    // sort snapshots in reverse chronological order
 	    // to ensure the first returned is the lastest
-	    scoped_ptr<DBClientCursor> cursor( conn->query( "test.pingmonitor" , Query(BSONObj()).sort("_id",-1)) ) ;
-	    latestMonitorInfo = cursor->next();
+	    scoped_ptr<DBClientCursor> cursor( conn->query( writeLocation , Query(BSONObj()).sort("_id",-1)) ) ;
+	    if( cursor->more() )
+		latestMonitorInfo = cursor->next();
+	    else
+		toReturn.append( "errmsg" , ERRCODES["NO_DATA"] );
 	    connPtr->done(); 
 	}
 	catch( DBException& e ){
-	    show.append("errmsg" , e.toString() );
-	    return show.obj();	    	
+	    toReturn.append("errmsg" , e.toString() );
+	    return toReturn.obj();	    	
 	}
 	BSONObjBuilder nodeShow;
 	BSONObjBuilder edgeShow;
@@ -151,13 +155,13 @@ namespace mongo {
 		edgeShow.append( edgestr , tgtObj["isConnected"].boolean() );
 	    }
 	}
-//    	show.append( "edges_full" , latestMonitorInfo.getObjectField("edges") ); 
-//	show.append( "nodes_full" , latestMonitorInfo.getObjectField("nodes") );
-	show.append( "edges" , edgeShow.obj() );
-	show.append( "nodes" , nodeShow.obj() );
-	show.append( "errors" , latestMonitorInfo.getObjectField("errors") );
-	show.append( "warnings" , latestMonitorInfo.getObjectField("warnings") );
-	return show.obj(); 
+//    	toReturn.append( "edges_full" , latestMonitorInfo.getObjectField("edges") ); 
+//	toReturn.append( "nodes_full" , latestMonitorInfo.getObjectField("nodes") );
+	toReturn.append( "edges" , edgeShow.obj() );
+	toReturn.append( "nodes" , nodeShow.obj() );
+	toReturn.append( "errors" , latestMonitorInfo.getObjectField("errors") );
+	toReturn.append( "warnings" , latestMonitorInfo.getObjectField("warnings") );
+	return toReturn.obj(); 
     }
     
 
@@ -209,28 +213,21 @@ namespace mongo {
 
 //	addNewNodes( conn , nodes );
 
+	//TODO: choose db based on type of mongo instance
+	db = "test";
+	string writeLocation = db+"."+outerCollection+"."+collectionPrefix+"."+graphs; 
+
 	BSONObj result = resultBuilder.obj();
 	bool written = writeMonitorData( result ); 
 	if( written == false ){
 	    // TODO: Properly log inability to write to self 
-	    cout << "Failed to write PingMonitor data to self" << endl;
+	    cout << "Failed to write PingMonitor data from " + target.toString() + " to self on " + writeLocation << endl;
 	}
 
 	numPings++;
     }
 
     bool PingMonitor::writeMonitorData( BSONObj& toWrite ){
-
-	//TODO: choose db based on type of mongo instance
-	db = "test";
-	string writeLocation = db+"."+outerCollection+"."+collectionPrefix+"."+graphs; 
-
-	//TODO: find own HostAndPort more cleanly?
-	string selfHostName = getHostName();
-	int selfPort = cmdLine.port;
-	stringstream ss;
-	ss << selfPort;	
-	HostAndPort self = selfHostName + ":" + ss.str() ;
 
 	try{
 	    ScopedDbConnection conn( self.toString() , socketTimeout); 
@@ -239,6 +236,7 @@ namespace mongo {
 	    numPings++;
 	    return true;
 	} catch( DBException& e ){
+	    cout << e.toString() << endl;
 	    return false;
 	}
     }
@@ -411,7 +409,6 @@ namespace mongo {
 	    qBuilder.append("upsert" , true );
 	    Query q( qBuilder.obj() ); 
 
-	   // conn.update("test.pingmonitor.allnodes" , q );	    
 	}	
     }
 
@@ -759,7 +756,7 @@ namespace mongo {
 		results.append("errmsg" , ERRCODES["NOT_ENOUGH_RECORDS"]);
 		return results.obj();
 	    }
-	    auto_ptr<DBClientCursor> cursor  = conn.query( "test.pingmonitor" , Query(BSONObj()).sort("_id",-1) );
+	    auto_ptr<DBClientCursor> cursor  = conn.query( writeLocation , Query(BSONObj()).sort("_id",-1) );
 	   
 	    while( cursor->more() ){ 
 		BSONObj moment = cursor->next();
