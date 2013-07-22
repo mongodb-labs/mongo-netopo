@@ -137,6 +137,14 @@ namespace mongo {
 	    return false;
     }
 
+    void PingMonitorThreadManager::clearAllHistory(){
+	map< HostAndPort , PingMonitor* >::iterator i = targets.begin();
+	while( i!= targets.end() ){
+	    i->second->clearHistory();
+	}
+    }
+
+
     // returns errmsg if target is invalid 
     // (if not of master of a network, we can't connect to it, etc)
     BSONObj PingMonitorThreadManager::createTarget( HostAndPort& hp , bool on=true , int interval=15 , string customCollectionPrefix="" ){

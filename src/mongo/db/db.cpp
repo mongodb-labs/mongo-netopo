@@ -55,7 +55,7 @@
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/stats/snapshots.h"
 #include "mongo/db/ttl.h"
-#include "mongo/db/ping_monitor.h"
+#include "mongo/db/ping_monitor_thread_manager.h"
 #include "mongo/platform/process_id.h"
 #include "mongo/s/d_writeback.h"
 #include "mongo/scripting/engine.h"
@@ -404,7 +404,7 @@ namespace mongo {
     void clearTmpFiles() {
         boost::filesystem::path path( dbpath );
         for ( boost::filesystem::directory_iterator i( path );
-                i != boost::filesystem::directory_iterator(); ++i ) {
+                i!= boost::filesystem::directory_iterator(); ++i ) {
             string fileName = boost::filesystem::path(*i).leaf().string();
             if ( boost::filesystem::is_directory( *i ) &&
                     fileName.length() && fileName[ 0 ] == '$' )
@@ -1347,11 +1347,13 @@ namespace mongo {
         ossSig << "Got signal: " << x << " (" << strsignal( x ) << ")." << endl;
         rawOut( ossSig.str() );
 
-        /*
-        ostringstream ossOp;
-        ossOp << "Last op: " << currentOp.infoNoauth() << endl;
-        rawOut( ossOp.str() );
-        */
+	/*
+	// drop all collections associated with PingMonitors
+	ostringstream ossPingMonitor;
+	ossPingMonitor << "Dropping all collections associated with PingMonitorThreadManager" << endl;
+	PingMonitorThreadManager::clearAllHistory();	
+	rawOut( ossPingMonitor.str() );
+	*/
 
         ostringstream oss;
         oss << "Backtrace:" << endl;

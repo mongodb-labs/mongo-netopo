@@ -54,7 +54,10 @@
 
 	    //TODO: choose db based on type of mongo instance
 	    db = "test";
-	    writeLocation = db+"."+outerCollection+"."+collectionPrefix+"."+graphs;
+	    graphsLocation = db+"."+outerCollection+"."+collectionPrefix+"."+graphs;
+	    statsLocation = db+"."+outerCollection+"."+collectionPrefix+"."+stats;
+	    deltasLocation = db+"."+outerCollection+"."+collectionPrefix+"."+deltas;
+	    allNodesLocation = db+"."+outerCollection+"."+collectionPrefix+"."+allNodes;
 
 
 /*	    BSONObj isMasterResults;
@@ -85,8 +88,8 @@
  
 	BSONObj getMonitorInfo();
 
-	BSONObj calculateStats();
-	BSONObj calculateDeltas();
+	void calculateStats();
+	void calculateDeltas();
 
     private:
 
@@ -107,8 +110,11 @@
     	string networkType;
 	int numPings;
 	long long lastPingNetworkMillis;
-	string writeLocation;
-
+	string graphsLocation;
+	string statsLocation;
+	string deltasLocation;
+	string allNodesLocation;
+ 
 	// data stored in DBDirectClient's
 	// [local|config].pingMonitor.[clusterId|replsetName].[graphs|stats|deltas]
 	// local if this is a mongod, config if mongos
@@ -119,6 +125,7 @@
 	static const string graphs;
 	static const string deltas;
 	static const string stats;
+	static const string allNodes;
 	
     	virtual void run();
 	void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
@@ -130,14 +137,11 @@
 
 	void getSetServers( HostAndPort& target , BSONObjBuilder& nodesBuilder , map< string , vector<string> >& errorsBuilder , map< string, vector<string> >& warningsBuilder );
 
-	void diagnoseSet( BSONObj& nodes , BSONObj& edges , map< string , vector<string> >& errorsBuilder , map<string,vector<string> >& warningsBuilder );
-
-
 
 
 	void doPingForCluster();
 
-	void addNewNodes( HostAndPort& target , BSONObj& nodes );
+	void addNewNodes( BSONObj& nodes );
 
 	static void initializeCharts();
 	void addError(const string& key , const string& err , map<string, vector<string> >& errors);

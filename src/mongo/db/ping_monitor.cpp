@@ -25,6 +25,8 @@
 #include <boost/tokenizer.hpp>
 #include <unistd.h>
 #include <sstream>
+#include <istream>
+#include <climits>
 #include "boost/date_time/posix_time/posix_time.hpp"
 
 #include "mongo/util/net/sock.h";
@@ -39,6 +41,7 @@ namespace mongo {
     const string PingMonitor::graphs = "graphs";
     const string PingMonitor::deltas = "deltas";
     const string PingMonitor::stats = "stats";
+    const string PingMonitor::allNodes = "allNodes";
 
     // Error codes
     map< string , string > PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
@@ -98,15 +101,14 @@ namespace mongo {
 	return true;
     } 
 
-    //TODO: write drop collection query
     void PingMonitor::clearHistory(){
 	try{
 	    ScopedDbConnection conn( self.toString() , socketTimeout );
-	    conn->query( writeLocation , Query( BSON( "drop" << 1 ) ) ); 
+	    conn->query( graphsLocation , Query( BSON( "drop" << 1 ) ) ); 
 	    conn.done();
 	}
 	catch( DBException& e){
-
+	    cout << "[PingMonitor::clearHistory()] : " << e.toString() << endl;
 	}
     }
 
@@ -116,13 +118,12 @@ namespace mongo {
 	BSONObjBuilder toReturn;
 	BSONObj latestMonitorInfo;
 	scoped_ptr<ScopedDbConnection> connPtr;
-	auto_ptr<DBClientCursor> cursor;
 	try{
 	    connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) ); 
 	    ScopedDbConnection& conn = *connPtr;
 	    // sort snapshots in reverse chronological order
 	    // to ensure the first returned is the lastest
-	    scoped_ptr<DBClientCursor> cursor( conn->query( writeLocation , Query(BSONObj()).sort("_id",-1)) ) ;
+	    scoped_ptr<DBClientCursor> cursor( conn->query( graphsLocation , Query(BSONObj()).sort("_id",-1)) ) ;
 	    connPtr->done(); 
 	    if( cursor->more() )
 		latestMonitorInfo = cursor->next();
@@ -208,7 +209,7 @@ namespace mongo {
 	buildIdMap( nodes , idMapBuilder );
 	idMap = idMapBuilder.obj();
 
-	diagnoseSet( nodes , edges , errorsBuilder , warningsBuilder );
+//	diagnoseSet( nodes , edges , errorsBuilder , warningsBuilder );
 	errors = convertToBSON( errorsBuilder );
 	warnings = convertToBSON( warningsBuilder );
 
@@ -219,32 +220,32 @@ namespace mongo {
 	resultBuilder.append("warnings" , warnings); 
 	resultBuilder.append("currentTime" , jsTime() );
 
-//	addNewNodes( conn , nodes );
-
+	addNewNodes( nodes );
+	
 	//TODO: choose db based on type of mongo instance
 	db = "test";
-	string writeLocation = db+"."+outerCollection+"."+collectionPrefix+"."+graphs; 
 
 	BSONObj result = resultBuilder.obj();
 	bool written = writeMonitorData( result ); 
 	if( written == false ){
 	    // TODO: Properly log inability to write to self 
-	    cout << "Failed to write PingMonitor data from " + target.toString() + " to self on " + writeLocation << endl;
+	    cout << "[PingMonitor::doPingForReplset()] : " << "Failed to write PingMonitor data from " + target.toString() + " to self on " + graphsLocation << endl;
 	}
+
+	calculateStats();
 
 	numPings++;
     }
 
     bool PingMonitor::writeMonitorData( BSONObj& toWrite ){
-
 	try{
 	    ScopedDbConnection conn( self.toString() , socketTimeout); 
-	    conn->insert( writeLocation , toWrite );
+	    conn->insert( graphsLocation , toWrite );
 	    conn.done();
 	    numPings++;
 	    return true;
 	} catch( DBException& e ){
-	    cout << e.toString() << endl;
+	    cout << "[PingMonitor::writeMonitorData()] : " << e.toString() << endl;
 	    return false;
 	}
     }
@@ -266,7 +267,7 @@ namespace mongo {
 	    } 
 	    connPtr->done();
 	}
-	catch ( UserException ue ){
+	catch ( DBException& ue ){
 		// unable to connect to target
 		// TODO: log this error somewhere
 		return; 
@@ -341,12 +342,6 @@ namespace mongo {
 		
     }
 
-    void PingMonitor::diagnoseSet( BSONObj& nodes , BSONObj& edges , map< string , vector<string> >& errorsBuilder , map<string,vector<string> >& warningsBuilder ){
-
-
-    }
-
-
     void PingMonitor::doPingForCluster(){
 
 	// create a typedef for the Graph type
@@ -391,33 +386,48 @@ namespace mongo {
 	resultBuilder.append("warnings" , warnings); 
 	resultBuilder.append("currentTime" , jsTime() );
 
-//	addNewNodes( conn , nodes );
-
+	addNewNodes( nodes );
+	
 	BSONObj result = resultBuilder.obj();
 	bool written = writeMonitorData( result ); 
 	if( written == false ){
-	    // TODO: Properly log inability to write to self 
-	    cout << "Failed to write PingMonitor data to self" << endl;
+	    // TODO: make error an errcode 
+	    cout << "[PingMonitor::doPingForCluster()] : " << "Failed to write PingMonitor data to self" << endl;
 	}
  
+	calculateStats();
+
     }
 
-    void PingMonitor::addNewNodes( HostAndPort& target , BSONObj& nodes ){
-	BSONObjBuilder allNodes;
-    
-	for( BSONObj::iterator i=nodes.begin(); i.more(); ){
-	    BSONElement nodeElem = i.next();
-	    BSONObj nodeObj = nodeElem.embeddedObject();
-	    BSONObjBuilder nodeFields;
-	    nodeFields.append( "currentRole" , nodeObj.getObjectField("type")["role"].valuestrsafe() );
-	    //nodeSubObj.appendArray( "previousRoles" )
-
-	    BSONObjBuilder qBuilder;
-	    qBuilder.append( nodeObj["key"].valuestrsafe() , nodeFields.obj() );
-	    qBuilder.append("upsert" , true );
-	    Query q( qBuilder.obj() ); 
-
-	}	
+    void PingMonitor::addNewNodes( BSONObj& nodes ){
+	scoped_ptr<ScopedDbConnection> connPtr;
+	try{
+	    connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) ); 
+	    ScopedDbConnection& conn = *connPtr;
+	    for( BSONObj::iterator i=nodes.begin(); i.more(); ){
+		BSONElement nodeElem = i.next();
+		BSONObj nodeObj = nodeElem.embeddedObject();
+		string nodeKey = nodeObj["key"].valuestrsafe();
+		scoped_ptr<DBClientCursor> cursor( conn->query( allNodesLocation , QUERY("key" << nodeKey ) ) );
+		if( cursor->more() ){
+		    // node is already in allNodes
+		    // potentially add more information such as previous roles, uptime etc
+		    //BSONObjBuilder nodeFields;
+		    //nodeFields.append( "currentRole" , nodeObj.getObjectField("type")["role"].valuestrsafe() );
+		    //nodeSubObj.appendArray( "previousRoles" )
+		    // maybe associate role with timestamp? timeStamp : role , timeStamp : role
+		}
+		else{
+		    // need to add node to allNodes
+		    BSONObj newNode = BSON( "key" << nodeObj["key"].valuestrsafe() );
+		    conn->insert( allNodesLocation , newNode );
+		}
+	    }	
+	connPtr->done();	
+	}
+	catch( DBException& e ){
+	    cout << "[PingMonitor::addNewNodes] : " << e.toString() << endl;
+	}
     }
 
     BSONObj convertToBSON( map<string, vector<string> >& m ){
@@ -535,7 +545,9 @@ namespace mongo {
 		} 
 	    }
 	}
-	catch( DBException& e ){}
+	catch( DBException& e ){
+	    cout << "[PingMonitor::getShardServers()] : " << "Couldn't connect to config server" << endl;
+	}
 
 	connPtr->done();
 	return index;
@@ -564,11 +576,14 @@ namespace mongo {
 		sprintf(idString , "%d" , id);
 		nodes.append( idString , newHost.obj() );
 	    }
-	} catch( DBException& e) {} 
+	} catch( DBException& e) {
+	    cout << "[PingMonitor::getShardServers()] : " << "Couldn't connect to config server" << endl;
+	}
 	connPtr->done();
 	return index;
     }
 
+    //TODO : only captures a single config server
     int PingMonitor::getConfigServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 	scoped_ptr<ScopedDbConnection> connPtr;
 	try{
@@ -590,7 +605,9 @@ namespace mongo {
 	    sprintf(idString, "%d", id);
 	    nodes.append( idString, newHost.obj() ); 
 	} 
-	catch( DBException& e) {}
+	catch( DBException& e) {
+	    cout << "[PingMonitor::getShardServers()] : " << "Couldn't connect to config server" << endl;
+	}
 	connPtr->done();
 	return index;
     }
@@ -611,11 +628,9 @@ namespace mongo {
 		BSONObj tgtObj = tgtElem.embeddedObject();
 		BSONObjBuilder newEdge;
     		string tgtHostName = tgtObj.getStringField("hostName"); 
-		scoped_ptr<ScopedDbConnection> connPtr;
 		BSONObj cmdReturned;
 		try{ 
-		    connPtr.reset( new ScopedDbConnection( srcHostName , socketTimeout ) );
-		    ScopedDbConnection& conn = *connPtr;
+		    ScopedDbConnection conn( srcHostName , socketTimeout ); 
 		    try{
 			BSONObjBuilder pingCmdBuilder;
 			pingCmdBuilder.append( "ping" , 1 );
@@ -628,11 +643,12 @@ namespace mongo {
 			newEdge.append( "isConnected" , "false" );
 			newEdge.append( "errmsg" , e.toString() );
 			continue;
+			cout << "[PingMonitor::buildGraph()] : " << e.toString() << endl;
 		    } 
-		    connPtr->done();
+		    conn.done();
 		}
-		catch( UserException& e ){
-		    //TODO: log client connection error
+		catch( DBException& e ){
+		    cout << "[PingMonitor::buildGraph()] : " << e.toString() << endl;
 		}
 		BSONObj edgeInfo = cmdReturned.getObjectField( tgtHostName );
 		if( edgeInfo["isConnected"].boolean() == false ){
@@ -643,10 +659,10 @@ namespace mongo {
 		    newEdge.append( "isConnected" , true );
 		    newEdge.append( "pingTimeMicrosecs" , edgeInfo["pingTimeMicrosecs"].valuestrsafe() );
 		}
-		newEdge.append( "bytesSent" , edgeInfo["bytesSent"]._numberLong() );
-		newEdge.append( "bytesReceived" , edgeInfo["bytesReceived"]._numberLong() );
-		newEdge.append( "incomingSocketExceptions" , edgeInfo["incomingSocketExceptions"]._numberLong() );
-		newEdge.append( "outgoingSocketExceptions" , edgeInfo["outgoingSocketExceptions"]._numberLong() );
+		newEdge.append( "bytesSent" , edgeInfo["bytesSent"].numberLong() );
+		newEdge.append( "bytesReceived" , edgeInfo["bytesReceived"].numberLong() );
+		newEdge.append( "incomingSocketExceptions" , edgeInfo["incomingSocketExceptions"].numberLong() );
+		newEdge.append( "outgoingSocketExceptions" , edgeInfo["outgoingSocketExceptions"].numberLong() );
 		srcEdges.append( tgtElem.fieldName() , newEdge.obj() );  
 	    }
 	    edges.append( srcElem.fieldName() , srcEdges.obj() );
@@ -733,71 +749,153 @@ namespace mongo {
 	}
     }
 
-/*    BSONObj PingMonitor::calculateStats(){
-	BSONObjBuilder results;
-*/    /* fields
-	numPingAttempts
-	numSuccessful
-	numFailed
-	percentageIsConnected
-	avgIncomingSocketExceptions
-	avgOutgiongSocketExceptions
-	avgBytesSent
-	avgBytesReceived
-	maxPingTimeMicrosecs
-	minPingTimeMicrosecs
-	avgPingTimeMicrosecs
-	pingTimeStdDeviation	
-    */
-
-    /* auxiliary fields
-	sumPingTimeMicrosecs
-	subtractMeanSquaredSum
-    */
-
-/*
-
-	DBClientConnection conn;
-	string connInfo;
-	bool isConnected;
-	BSONObj monitorResults;
+    void PingMonitor::calculateStats(){
+	scoped_ptr<ScopedDbConnection> connPtr;
+	auto_ptr<DBClientCursor> cursor;
 	try{
-	    isConnected = conn.connect( target , connInfo );
-	    if( conn.count("test.pingMonitor") < 1 ){
-		results.append("errmsg" , ERRCODES["NOT_ENOUGH_RECORDS"]);
-		return results.obj();
+	    connPtr.reset( new ScopedDbConnection( self.toString() ) ); 
+	    ScopedDbConnection& conn = *connPtr;
+	    cursor = conn->query( graphsLocation , Query(BSONObj()) );
+	    if( cursor->more() == false ){
+		// no graphs data to read from
+		// TODO: do we need to log this?
+		// ERRCODES["NO_DATA"]
+		connPtr->done();
+		return;
 	    }
-	    auto_ptr<DBClientCursor> cursor  = conn.query( writeLocation , Query(BSONObj()).sort("_id",-1) );
-	   
-	    while( cursor->more() ){ 
-		BSONObj moment = cursor->next();
-		BSONObj edges = moment["edges"].embeddedObject();	
-			    
-		//max and min ping time, num ping attempts, num successful, num failed, num socket exceptions, num bytes exchanged
-		for (BSONObj::iterator i = monitorResults.getObjectField("edges").begin(); i.more(); ){
-		    const BSONElement srcElem = i.next();
-		    const BSONObj srcObj = srcElem.embeddedObject();
-		    for( BSONObj::iterator j = srcObj.begin(); j.more(); ){
-			const BSONElement tgtElem = j.next();
-			const BSONObj tgtObj = tgtElem.embeddedObject();
-			string edgestr = "";
-			edgestr += srcElem.fieldName();
-			edgestr += " -> ";
-			edgestr += tgtElem.fieldName();
-			edgestr += tgtObj["pingTimeMicrosecs"].valuestrsafe();
-			edgeShow.append( edgestr , tgtObj["isConnected"].boolean() );
+	    else{
+		
+		// get a list of all node keys as strings
+		auto_ptr<DBClientCursor> allNodesCursor = conn->query( allNodesLocation, Query(BSONObj()) );
+		vector< string > allNodesList;
+		while( allNodesCursor->more() )
+		    allNodesList.push_back( allNodesCursor->next()["key"].valuestrsafe() );
+
+		// initialize maps of all fields being recorded
+	    	map< string , map<string, int> > numPingAttempts;
+		map< string , map<string, int> > numSuccessful;
+		map< string , map<string, int> > numFailed;
+		map< string , map<string, double> > percentConnected;
+		map< string , map<string, int> > maxPingTime;
+		map< string , map<string, int> > minPingTime;
+		map< string , map<string, long long> > sumPingTime; //only used for intermediate steps
+		map< string , map<string, double> > avgPingTime;
+		map< string , map<string, int> > pingTimeStdDev;
+		map< string , map<string, int> > subtractMeanSquaredSum ; // only used for intermediate steps
+		map< string , map<string, long long> > totalOutSocketExceptions;
+		map< string , map<string, long long> > totalInSocketExceptions; 
+		map< string , map<string, long long> > totalBytesSent;
+		map< string , map<string, long long> > totalBytesRecd;
+
+		// initialize values that need to be compared 
+		for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
+		    for( vector<string>::iterator tgt=allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
+			if( (*src).compare( *tgt ) != 0 ){
+			    maxPingTime[ *src ][ *tgt ] = 0;
+			    minPingTime[ *src ][ *tgt ] = INT_MAX;	    
+			    sumPingTime[ *src ][ *tgt ] = 0;
+			    numPingAttempts[ *src ][ *tgt ] = 0;
+			    numSuccessful[ *src ][ *tgt ] = 0;
+			    numFailed[ *src ][ *tgt ] = 0;
+			    percentConnected[ *src ][ *tgt ] = 0;
+			    sumPingTime[ *src ][ *tgt ] = 0;
+			    avgPingTime[ *src ][ *tgt ] = 0;
+			    pingTimeStdDev[ *src ][ *tgt ] = 0;
+			    subtractMeanSquaredSum[ *src ][ *tgt ] = 0;
+			    totalOutSocketExceptions[ *src ][ *tgt ] = 0;
+			    totalInSocketExceptions[ *src ][ *tgt ] = 0;
+			    totalBytesSent[ *src ][ *tgt ] = 0;
+			    totalBytesRecd[ *src ][ *tgt ] = 0;
+			}
 		    }
 		}
-	   /
 
+		// calculate stats requiring one level of depth
+		while( cursor->more() ){
+		    BSONObj curr = cursor->next();
+		    BSONObj currEdges = curr.getObjectField("edges"); 
+		    BSONObj currIds = curr.getObjectField("idMap");
+		    for( vector<string>::iterator src = allNodesList.begin(); src!=allNodesList.end(); ++src ){
+			for( vector<string>::iterator tgt = allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
+			   
+			    if( (*src).compare( *tgt ) != 0 && currIds[ *src ].trueValue() != false && currIds[ *tgt ].trueValue() != false){
+				string srcNum = currIds[ *src ].valuestrsafe();
+				string tgtNum = currIds[ *tgt ].valuestrsafe();
+				BSONObj edge = currEdges.getObjectField( srcNum ).getObjectField( tgtNum );
 
+				// num ping attempts, successful and failed; max and min ping times
+				numPingAttempts[ *src ][ *tgt ]++;
+				if( edge["isConnected"].boolean() == true ){
+				    numSuccessful[ *src ][ *tgt ]++;
+				    int pingTime = atoi( edge["pingTimeMicrosecs"].valuestrsafe() );	
+				    if( pingTime > maxPingTime[ *src ][ *tgt ] )
+					maxPingTime[ *src ][ *tgt ] = pingTime;
+				    if( pingTime < minPingTime[ *src ][ *tgt ] )
+					minPingTime[ *src ][ *tgt ] = pingTime;
+				    sumPingTime[ *src ][ *tgt ] += pingTime;
+				}
+				else
+				    numFailed[ *src ][ *tgt ]++;
+
+    				// num socket exceptions and bytes sent/received
+				totalOutSocketExceptions[ *src ][ *tgt ] += edge["outgoingSocketExceptions"].numberLong();
+				totalInSocketExceptions[ *src ][ *tgt ] += edge["incomingSocketExceptions"].numberLong();
+				totalBytesSent[ *src ][ *tgt ] += edge["bytesSent"].numberLong();
+				totalBytesRecd[ *src ][ *tgt ] += edge["bytesReceived"].numberLong();
+			    }
+			} 
+		    }
+		}
+
+		// calculate stats requiring two levels of depth
+		for( vector<string>::iterator src = allNodesList.begin(); src!=allNodesList.end(); ++src ){
+		    for( vector<string>::iterator tgt = allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
+			if( numPingAttempts[ *src ][ *tgt ] > 0){
+			    if( numSuccessful[ *src ][ *tgt ] != 0 ){
+				double numSuccessfulD = numSuccessful[ *src ][ *tgt ];	
+				avgPingTime[ *src ][ *tgt ] = sumPingTime[ *src ][ *tgt ] / numSuccessfulD;
+			    }
+			    double numPingAttemptsD = numPingAttempts[ *src ][ *tgt ];
+			    percentConnected[ *src ][ *tgt ] = 100 * numSuccessful[ *src ][ *tgt ] / numPingAttemptsD;
+		    	}	
+		    } 
+		}
+
+		// calculate stats requiring three levels of depth
+
+		BSONObjBuilder statsBuilder;
+		for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
+		    BSONObjBuilder srcBuilder;
+		    for( vector<string>::iterator tgt=allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
+			if( (*src).compare( *tgt ) != 0 ){
+			    BSONObjBuilder tgtBuilder;
+			    tgtBuilder.append( "numPingAttempts" , numPingAttempts[ *src ][ *tgt ] );
+			    tgtBuilder.append( "numSuccessful" , numSuccessful[ *src ][ *tgt ] );
+			    tgtBuilder.append( "numFailed" , numFailed[ *src ][ *tgt ] );
+			    tgtBuilder.append( "percentConnected" , percentConnected[ *src ][ *tgt ] ); 
+			    tgtBuilder.append( "maxPingTime" , maxPingTime[ *src ][ *tgt ] );
+			    tgtBuilder.append( "minPingTime" , minPingTime[ *src ][ *tgt ] );
+			    tgtBuilder.append( "avgPingTime" , avgPingTime[ *src ][ *tgt ] );
+			    tgtBuilder.append( "pingTimeStdDev" , pingTimeStdDev[ *src ][ *tgt ] ); 
+			    tgtBuilder.append( "totalOutSocketExceptions" , totalOutSocketExceptions[ *src ][ *tgt ] );
+			    tgtBuilder.append( "totalInSocketExceptions" , totalInSocketExceptions[ *src ][ *tgt ] ); 
+			    tgtBuilder.append( "totalBytesSent" , totalBytesSent[ *src ][ *tgt ] );
+			    tgtBuilder.append( "totalBytesRecd" , totalBytesRecd[ *src ][ *tgt ] );
+			    srcBuilder.append( *tgt , tgtBuilder.obj() );
+			}
+		    }
+		    statsBuilder.append( *src , srcBuilder.obj() );
+		}
+		conn->insert( statsLocation , statsBuilder.obj() ); 
 	    }
-	} catch( DBException& e ){ TODO }
+	    connPtr->done(); 
 
-	return results.obj();
-
+	}
+	catch( DBException& e ){
+	    cout << "[PingMonitor::calculateStats()] : " << e.toString() << endl;
+	}
     }
-*/
+
 
     void PingMonitor::shutdown(){
 	alive = false;
@@ -812,13 +910,13 @@ namespace mongo {
     void PingMonitor::run() {
 	lastPingNetworkMillis = 0;
 	while ( ! inShutdown() && alive ) {
-	    LOG(3) << "PingMonitor thread for " << target.toString() << "  awake" << endl;
+	    cout << "[PingMonitor::run()] : " << "PingMonitor thread for " << target.toString() << "  awake" << endl;
 
 	    /*
 	    if( lockedForWriting() ) {
 		// note: this is not perfect as you can go into fsync+lock between
 		// this and actually doing the delete later
-		LOG(3) << " locked for writing" << endl;
+		cout << " locked for writing" << endl;
 		continue;
 	    }
 	    */
@@ -833,6 +931,7 @@ namespace mongo {
 	    
     	    sleepsecs( interval );
 	}
+	clearHistory();
     }
 
 } 
