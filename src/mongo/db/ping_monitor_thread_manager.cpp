@@ -149,64 +149,102 @@ namespace mongo {
     // (if not of master of a network, we can't connect to it, etc)
     BSONObj PingMonitorThreadManager::createTarget( HostAndPort& hp , bool on=true , int interval=15 , string customCollectionPrefix="" ){
 	BSONObjBuilder toReturn;
-	BSONObj connInfo = canConnect( hp );
+	BSONObj connInfo = getConnInfo( hp );
 
 	// check if we can connect to the host
-	if( connInfo["ok"].boolean() ){
-	    
-	    BSONObj netInfo = determineNetworkType( hp );
-
-	    // check if host is master of a network, and if so what type of network (cluster, replset)
-	    if( netInfo["networkType"].trueValue() ){
-
-		// retrieve custom settings from user if requested, otherwise use defaults
-    		if( customCollectionPrefix.empty() ){
-		    customCollectionPrefix = netInfo["collectionPrefix"].valuestrsafe();
-		}
-		else{
-		    // check that the user is not setting two targets to write to the same collection
-		    for(map< HostAndPort , PingMonitor* >::iterator i = targets.begin(); i!=targets.end(); i++){
-			if( i->second->getCollectionPrefix().compare( customCollectionPrefix ) == 0){
-			    toReturn.append( "ok" , false );
-			    toReturn.append( ERRMSG , ALREADY_USING_COLLECTION );
-			    return toReturn.obj();
-			}	
-		    } 
-		}
-
-
-		// make sure custom collection prefix does not contain invalid character $
-		if( customCollectionPrefix.find("$") == string::npos ){
-		    // create the new PingMonitor* object
-		    PingMonitor *pmt = new PingMonitor( hp , on , interval , customCollectionPrefix , netInfo["networkType"].valuestrsafe() );
-		    pmt->go();
-		    targets[ hp ] = pmt;
-		    toReturn.append("ok" , true);
-		    return toReturn.obj();
-		}
-		else{
-		    // custom collection prefix contains invalid character $ 
-		    toReturn.append("ok" , false);
-		    toReturn.append(ERRMSG , INVALID_COLLECTION_CHARACTER );
-		    return toReturn.obj();
-		}
-
-	    }
-	    else{
-		// target is not a network master 
-		toReturn.append("ok" , false);
-		toReturn.append(ERRMSG , TARGET_NOT_NETWORK_MASTER );
-		//TODO: make an ERRCODES for this class or better yet, throw exception
-	    }
+	if( connInfo["connectToHostFailed"].trueValue() ){ 
+	    toReturn.append( "ok" , false );
+	    toReturn.append( ERRMSG , connInfo["connectToHostFailed"].valuestrsafe() );
+	    return toReturn.obj();
 	}
+
+	// check if we could connect to the admin database on the host 
+	if( connInfo["connectToAdminFailed"].trueValue() ){
+	    toReturn.append( "ok" , false );
+	    toReturn.append( ERRMSG , connInfo["connectToAdminFailed"].valuestrsafe() ); 
+	    return toReturn.obj();
+	}
+
+	// check if host is master of a network
+	if( connInfo["isNotMaster"].trueValue() ){
+	    toReturn.append( "ok" , false );
+	    toReturn.append( ERRMSG , connInfo["isNotMaster"].valuestrsafe() ); 
+	    return toReturn.obj();
+	}
+
+	// check if connect to config database failed
+	if( connInfo["connectToConfigFailed"].trueValue() ){
+	    toReturn.append( "ok" , false );
+	    toReturn.append( ERRMSG , connInfo["connectToConfigFailed"].valuestrsafe() ); 
+	    return toReturn.obj();
+	}
+
+	// if custom collectionPrefix setting is empty, use default
+	if( customCollectionPrefix.empty() ){
+	    customCollectionPrefix = connInfo["collectionPrefix"].valuestrsafe();
+	}
+	// if custom collectionPrefix setting is set, check that collectionPrefix is not already in use
+	// and make sure custom collection prefix does not contain invalid character $
 	else{
-	    // can't make client connection to requested target
-	    toReturn.append("ok" , false );
-	    toReturn.append(ERRMSG , "CAN'T_MAKE_CLIENT_CONNECTION" );
-	    //TODO, same as 5 lines up
-	    toReturn.append("exceptionMsg" , connInfo["exceptionMsg"] );
+	    for(map< HostAndPort , PingMonitor* >::iterator i = targets.begin(); i!=targets.end(); i++){
+		if( i->second->getCollectionPrefix().compare( customCollectionPrefix ) == 0){
+		    toReturn.append( "ok" , false );
+		    toReturn.append( ERRMSG , ALREADY_USING_COLLECTION );
+		    return toReturn.obj();
+		}	
+	    } 
+	    if( customCollectionPrefix.find("$") != string::npos ){
+		toReturn.append( "ok" , false );
+		toReturn.append( ERRMSG , INVALID_COLLECTION_CHARACTER );
+		return toReturn.obj();
+	    }
+	} 
+
+	// if we passed all these requirements, create a target with this host
+	PingMonitor *pmt = new PingMonitor( hp , on , interval , customCollectionPrefix , connInfo["networkType"].valuestrsafe() );
+	pmt->go();
+	targets[ hp ] = pmt;
+	toReturn.append("ok" , true);
+	return toReturn.obj();
+    }
+
+    // check if the target is the master of a network
+    // masters: mongos, primary of replica set
+    // not masters: standalone mongod, secondary, arbiter
+    BSONObj PingMonitorThreadManager::getConnInfo( HostAndPort& hp ){
+	BSONObjBuilder toReturn;
+	BSONObj isMasterResults;
+        scoped_ptr<ScopedDbConnection> connPtr;
+        try{
+            connPtr.reset( new ScopedDbConnection( hp.toString() , socketTimeout ) ); 
+            ScopedDbConnection& conn = *connPtr;
+	    try{
+		conn->runCommand( "admin" , BSON("isMaster"<<1) , isMasterResults );
+		if( isMasterResults["msg"].trueValue() ){
+		    toReturn.append( "networkType" , "shardedCluster" );
+		    try{	
+			scoped_ptr<DBClientCursor> cursor( conn->query( "config.version" , BSONObj() ) );
+			toReturn.append( "collectionPrefix" ,  cursor->nextSafe()["clusterId"].__oid().toString()); 
+		    } catch( DBException& e ){
+			toReturn.append( "connectToConfigFailed" , e.toString() );
+		    }
+		}
+		if( isMasterResults["setName"].trueValue() ){
+		    toReturn.append( "networkType" , "replicaSet" );
+		    toReturn.append( "collectionPrefix" , isMasterResults["setName"].valuestrsafe() );
+		}
+		else{
+		    toReturn.append( "isNotMaster" , false );
+		}
+	    } catch ( DBException& e ){
+		toReturn.append( "connectToAdminFailed" , e.toString() );
+	    }	    
+	} catch( DBException& e ){
+	    toReturn.append( "connectToHostFailed" , e.toString() );
+	    return toReturn.obj();
 	}
-	return toReturn.obj();	    
+	connPtr->done();
+	return toReturn.obj();
     }
 
     bool PingMonitorThreadManager::amendTarget( HostAndPort& hp , bool _on ){
@@ -229,51 +267,5 @@ namespace mongo {
 	    return false;
     }
 
-    BSONObj PingMonitorThreadManager::canConnect( HostAndPort& hp ){
-	BSONObjBuilder toReturn;
-	try{
-	    ScopedDbConnection conn( hp.toString() , socketTimeout );
-	    conn.done();
-	    toReturn.append( "ok" , true );
-	    return toReturn.obj(); 
-	}
-	catch( UserException& e){
-	    toReturn.append( "ok" , false );
-	    toReturn.append( "exceptionMsg" , e.toString() );
-	    return toReturn.obj();
-	}
-    }
 
-    // check if the target is the master of a network
-    // masters: mongos, primary of replica set
-    // not masters: standalone mongod, secondary, arbiter
-    BSONObj PingMonitorThreadManager::determineNetworkType( HostAndPort& hp ){
-	BSONObjBuilder toReturn;
-	BSONObj isMasterResults;
-
-        scoped_ptr<ScopedDbConnection> connPtr;
-        try{
-            connPtr.reset( new ScopedDbConnection( hp.toString() , socketTimeout ) ); 
-            ScopedDbConnection& conn = *connPtr;
-
-	    conn->runCommand( "admin" , BSON("isMaster"<<1) , isMasterResults );
-	    if( isMasterResults["msg"].trueValue() ){
-		toReturn.append( "networkType" , "shardedCluster" );
-		scoped_ptr<DBClientCursor> cursor( conn->query( "config.version" , BSONObj() ) );
-		toReturn.append( "collectionPrefix" ,  cursor->next()["clusterId"].__oid().toString()); 
-
-	    }
-	    if( isMasterResults["setName"].trueValue() ){
-		toReturn.append( "networkType" , "replicaSet" );
-		toReturn.append( "collectionPrefix" , isMasterResults["setName"].valuestrsafe() );
-	    }
-	    
-	}
-	catch( DBException& e ){
-	    return toReturn.obj();
-	}
-	connPtr->done();
-	return toReturn.obj();
-    }
-
-} 
+}

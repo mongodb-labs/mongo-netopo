@@ -126,7 +126,7 @@ namespace mongo {
 	    scoped_ptr<DBClientCursor> cursor( conn->query( graphsLocation , Query(BSONObj()).sort("_id",-1)) ) ;
 	    connPtr->done(); 
 	    if( cursor->more() )
-		latestMonitorInfo = cursor->next();
+		latestMonitorInfo = cursor->nextSafe();
 	    else{
 		toReturn.append( "errmsg" , ERRCODES["NO_DATA"] );
 		return toReturn.obj();
@@ -335,28 +335,18 @@ namespace mongo {
 		id++;
 	    }
 	}	
-
-
-
-
-		
     }
 
     void PingMonitor::doPingForCluster(){
 
 	// create a typedef for the Graph type
-
 	// Add nodes to the graph
-	
 	// Write out the edges in the graph
-
 	// declare a graph object
-
 	// add the edges to the graph object
 
 	BSONObjBuilder resultBuilder;
 	resultBuilder.append( "target" , target.toString(true) );
-
 
 	BSONObjBuilder nodesBuilder, edgesBuilder, idMapBuilder;
 	BSONObj nodes, edges, idMap, errors, warnings;
@@ -456,7 +446,6 @@ namespace mongo {
     }
 
     void PingMonitor::collectClientInfo( string connString , BSONObjBuilder& newHost , BSONObj& type , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){	
-
 	HostAndPort hp( connString );
 
 	string mongod = "mongod";
@@ -478,13 +467,14 @@ namespace mongo {
     }
 
     int PingMonitor::getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+
 	scoped_ptr<ScopedDbConnection> connPtr;
 	try{
 	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
 	    ScopedDbConnection& conn = *connPtr;
-	    scoped_ptr<DBClientCursor> cursor( conn->query( "config.shards" , BSONObj() ) ) ;
+	    auto_ptr<DBClientCursor> cursor( conn->query( "config.shards" , BSONObj() ) ) ;
 	    while( cursor->more() ){
-		BSONObj p = cursor->next();
+		BSONObj p = cursor->nextSafe();
 		string hostField = p.getStringField("host");
 		string::size_type startPos = hostField.find("/");
 		if( startPos != string::npos ){
@@ -546,7 +536,7 @@ namespace mongo {
 	    }
 	}
 	catch( DBException& e ){
-	    cout << "[PingMonitor::getShardServers()] : " << "Couldn't connect to config server" << endl;
+	    cout << "[PingMonitor::getShardServers()] : " << e.toString() << endl;
 	}
 
 	connPtr->done();
@@ -561,7 +551,7 @@ namespace mongo {
 	    ScopedDbConnection& conn = *connPtr;
 	    scoped_ptr<DBClientCursor> cursor( conn->query( "config.mongos" , BSONObj() ) ) ;
 	    while( cursor->more()){
-		BSONObj p = cursor->next();
+		BSONObj p = cursor->nextSafe();
 		string hostField = p.getStringField("_id");
 		int id = index;
 		index++;
@@ -577,7 +567,7 @@ namespace mongo {
 		nodes.append( idString , newHost.obj() );
 	    }
 	} catch( DBException& e) {
-	    cout << "[PingMonitor::getShardServers()] : " << "Couldn't connect to config server" << endl;
+	    cout << "[PingMonitor::getShardServers()] : " << e.toString() << endl;
 	}
 	connPtr->done();
 	return index;
@@ -771,7 +761,9 @@ namespace mongo {
 		while( allNodesCursor->more() )
 		    allNodesList.push_back( allNodesCursor->next()["key"].valuestrsafe() );
 
-		// initialize maps of all fields being recorded
+		// initialize maps
+		// first one is a three dimensional map of ping times to edges at every point in time
+		map< int , map< string , map<string, int> > > pingTime; // only used for intermediate steps;
 	    	map< string , map<string, int> > numPingAttempts;
 		map< string , map<string, int> > numSuccessful;
 		map< string , map<string, int> > numFailed;
@@ -780,14 +772,14 @@ namespace mongo {
 		map< string , map<string, int> > minPingTime;
 		map< string , map<string, long long> > sumPingTime; //only used for intermediate steps
 		map< string , map<string, double> > avgPingTime;
-		map< string , map<string, int> > pingTimeStdDev;
-		map< string , map<string, int> > subtractMeanSquaredSum ; // only used for intermediate steps
+		map< string , map<string, double> > pingTimeStdDev;
+		map< string , map<string, double> > subtractMeanSquaredSum ; // only used for intermediate steps
 		map< string , map<string, long long> > totalOutSocketExceptions;
 		map< string , map<string, long long> > totalInSocketExceptions; 
 		map< string , map<string, long long> > totalBytesSent;
 		map< string , map<string, long long> > totalBytesRecd;
 
-		// initialize values that need to be compared 
+		// initialize values (many need to be compared) 
 		for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
 		    for( vector<string>::iterator tgt=allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
 			if( (*src).compare( *tgt ) != 0 ){
@@ -810,46 +802,69 @@ namespace mongo {
 		    }
 		}
 
-		// calculate stats requiring one level of depth
+		// create a temporary map of edges to ping times for quick access in calculating stats
+		// pingTime[ *src ][ *tgt ] = 0 means nodes not connected
+		// pingTime[ *src ][ *tgt ] = -1 means edge does not exist, either because it's a
+		// self-self edge, or those two nodes were not present at the same time
+		// also, calculate simple additive stats for socket exceptions and bytes sent/recd
+		int count = 0;
 		while( cursor->more() ){
-		    BSONObj curr = cursor->next();
+		    BSONObj curr = cursor->nextSafe();
 		    BSONObj currEdges = curr.getObjectField("edges"); 
 		    BSONObj currIds = curr.getObjectField("idMap");
-		    for( vector<string>::iterator src = allNodesList.begin(); src!=allNodesList.end(); ++src ){
-			for( vector<string>::iterator tgt = allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
-			   
+		    for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
+			for( vector<string>::iterator tgt=allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
 			    if( (*src).compare( *tgt ) != 0 && currIds[ *src ].trueValue() != false && currIds[ *tgt ].trueValue() != false){
 				string srcNum = currIds[ *src ].valuestrsafe();
 				string tgtNum = currIds[ *tgt ].valuestrsafe();
 				BSONObj edge = currEdges.getObjectField( srcNum ).getObjectField( tgtNum );
-
-				// num ping attempts, successful and failed; max and min ping times
-				numPingAttempts[ *src ][ *tgt ]++;
-				if( edge["isConnected"].boolean() == true ){
-				    numSuccessful[ *src ][ *tgt ]++;
-				    int pingTime = atoi( edge["pingTimeMicrosecs"].valuestrsafe() );	
-				    if( pingTime > maxPingTime[ *src ][ *tgt ] )
-					maxPingTime[ *src ][ *tgt ] = pingTime;
-				    if( pingTime < minPingTime[ *src ][ *tgt ] )
-					minPingTime[ *src ][ *tgt ] = pingTime;
-				    sumPingTime[ *src ][ *tgt ] += pingTime;
-				}
+				// ping time
+				if( edge["pingTimeMicrosecs"].trueValue() )
+				    pingTime[ count ][ *src ][ *tgt ] = atoi( edge["pingTimeMicrosecs"].valuestrsafe() );	
 				else
-				    numFailed[ *src ][ *tgt ]++;
-
-    				// num socket exceptions and bytes sent/received
+				    pingTime[ count ][ *src ][ *tgt ] = 0;
+				// socket exceptions and bytes sent/recd
 				totalOutSocketExceptions[ *src ][ *tgt ] += edge["outgoingSocketExceptions"].numberLong();
 				totalInSocketExceptions[ *src ][ *tgt ] += edge["incomingSocketExceptions"].numberLong();
 				totalBytesSent[ *src ][ *tgt ] += edge["bytesSent"].numberLong();
 				totalBytesRecd[ *src ][ *tgt ] += edge["bytesReceived"].numberLong();
 			    }
+			    else
+				pingTime[ count ][ *src ][ *tgt ] = -1;
+			}
+		    }
+		    count++;
+		}
+
+		// calculate stats requiring one level of depth (num ping attempts, successful and
+		// failed; max and min ping times
+		for( int i=0; i<count; i++){
+		    for( vector<string>::iterator src = allNodesList.begin(); src!=allNodesList.end(); ++src ){
+			for( vector<string>::iterator tgt = allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
+			    int p = pingTime[ i ][ *src ][ *tgt ];
+			    // the nodes were present at the same time
+			    if( p >= 0 ){ 
+				numPingAttempts[ *src ][ *tgt ]++;
+				// the nodes were connected
+				if( p > 0 ){
+				    numSuccessful[ *src ][ *tgt ]++;
+				    if( p > maxPingTime[ *src ][ *tgt ] )
+					maxPingTime[ *src ][ *tgt ] = p;
+				    if( p < minPingTime[ *src ][ *tgt ] )
+					minPingTime[ *src ][ *tgt ] = p;
+				    sumPingTime[ *src ][ *tgt ] += p;
+				}
+				else
+				    numFailed[ *src ][ *tgt ]++;
+			    }
 			} 
 		    }
 		}
 
-		// calculate stats requiring two levels of depth
+		// calculate stats requiring two levels of depth (percent connected, average ping time)
 		for( vector<string>::iterator src = allNodesList.begin(); src!=allNodesList.end(); ++src ){
 		    for( vector<string>::iterator tgt = allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
+			// the nodes were distinct
 			if( numPingAttempts[ *src ][ *tgt ] > 0){
 			    if( numSuccessful[ *src ][ *tgt ] != 0 ){
 				double numSuccessfulD = numSuccessful[ *src ][ *tgt ];	
@@ -861,8 +876,25 @@ namespace mongo {
 		    } 
 		}
 
-		// calculate stats requiring three levels of depth
+		// calculate stats requiring three and four levels of depth (ping time standard deviation)
+		for( int i=0; i<count; i++){
+		    for( vector<string>::iterator src = allNodesList.begin(); src!=allNodesList.end(); ++src ){
+			for( vector<string>::iterator tgt = allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
+			    int p = pingTime[ i ][ *src ][ *tgt ];
+			    // the nodes were connected
+			    if( p > 0)
+				subtractMeanSquaredSum[ *src ][ *tgt ] += ( p - avgPingTime[ *src ][ *tgt ] ) * ( p - avgPingTime[ *src ][ *tgt ] ); 
+			} 
+		    }
+		}
+		for( vector<string>::iterator src = allNodesList.begin(); src!=allNodesList.end(); ++src ){
+		    for( vector<string>::iterator tgt = allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
+			if( subtractMeanSquaredSum[ *src ][ *tgt ] > 0)
+			    pingTimeStdDev[ *src ][ *tgt ] = sqrt( subtractMeanSquaredSum[ *src ][ *tgt ] / numSuccessful[ *src ][ *tgt ] );
+		    } 
+		}
 
+		// save all stats figures to the database
 		BSONObjBuilder statsBuilder;
 		for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
 		    BSONObjBuilder srcBuilder;
@@ -874,7 +906,10 @@ namespace mongo {
 			    tgtBuilder.append( "numFailed" , numFailed[ *src ][ *tgt ] );
 			    tgtBuilder.append( "percentConnected" , percentConnected[ *src ][ *tgt ] ); 
 			    tgtBuilder.append( "maxPingTime" , maxPingTime[ *src ][ *tgt ] );
-			    tgtBuilder.append( "minPingTime" , minPingTime[ *src ][ *tgt ] );
+			    if( minPingTime[ *src ][ *tgt ] == INT_MAX )
+				tgtBuilder.append( "minPingTime" , "INT_MAX" );
+			    else
+				tgtBuilder.append( "minPingTime" , minPingTime[ *src ][ *tgt ] );
 			    tgtBuilder.append( "avgPingTime" , avgPingTime[ *src ][ *tgt ] );
 			    tgtBuilder.append( "pingTimeStdDev" , pingTimeStdDev[ *src ][ *tgt ] ); 
 			    tgtBuilder.append( "totalOutSocketExceptions" , totalOutSocketExceptions[ *src ][ *tgt ] );

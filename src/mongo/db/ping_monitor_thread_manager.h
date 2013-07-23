@@ -66,8 +66,7 @@
 	
 	static const double socketTimeout = 30.0;
 
-	static BSONObj canConnect( HostAndPort& hp );
-	static BSONObj determineNetworkType( HostAndPort& hp );
+	static BSONObj getConnInfo( HostAndPort& hp );
 
 	static const string NO_SUCH_TARGET; 
 	static const string INVALID_COLLECTION_CHARACTER;
