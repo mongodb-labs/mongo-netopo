@@ -33,6 +33,9 @@ namespace mongo {
 
     map< HostAndPort , PingMonitor* > PingMonitorThreadManager::targets; 
 
+    const string PingMonitorThreadManager::replicaSet = "replicaSet";
+    const string PingMonitorThreadManager::shardedCluster = "shardedCluster";
+
     const string PingMonitorThreadManager::ERRMSG = "errmsg";
     const string PingMonitorThreadManager::NO_SUCH_TARGET = "Server does not exist amongst targets."; 
     const string PingMonitorThreadManager::INVALID_COLLECTION_CHARACTER = "Custom collection prefix name contains invalid character $";
@@ -42,7 +45,6 @@ namespace mongo {
 
     // Retrieval commands 
 
-    //TODO
     BSONObj PingMonitorThreadManager::getAllTargetsWithInfo(){
 	BSONObjBuilder toReturn;
 	for( map< HostAndPort , PingMonitor* >::iterator i = targets.begin(); i!= targets.end(); ++i)
@@ -50,13 +52,11 @@ namespace mongo {
 	return toReturn.obj();
     } 
 
+    //TODO
     BSONObj PingMonitorThreadManager::getManagerInfo(){
 	return BSONObj();
     }
 
-
-    //TODO , DON'T call other get functions from within; use iterator once for all
-    // possibly call getTargetInfo() from PingMonitor
     BSONObj PingMonitorThreadManager::getTargetInfo( HostAndPort& hp ){
     	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
 	if( i != targets.end() )
@@ -123,6 +123,7 @@ namespace mongo {
 	return toReturn.obj();
     }
 
+    // remove a target, including deleting whatever data it has stored
     bool PingMonitorThreadManager::removeTarget( HostAndPort& hp ){
 	map< HostAndPort , PingMonitor* >::iterator i = targets.find( hp );
 	if( i != targets.end() ){
@@ -137,6 +138,7 @@ namespace mongo {
 	    return false;
     }
 
+    // delete all history associated with any PingMonitor target
     void PingMonitorThreadManager::clearAllHistory(){
 	map< HostAndPort , PingMonitor* >::iterator i = targets.begin();
 	while( i!= targets.end() ){
@@ -144,42 +146,21 @@ namespace mongo {
 	}
     }
 
-
-    // returns errmsg if target is invalid 
-    // (if not of master of a network, we can't connect to it, etc)
+    // returns { ok : true } if target was created successfully
+    // returns { ok : false } and { errmsg : <msg> } if target creation unsuccessful 
+    // (if not of master of a network, we can't connect to it, invalid custom collection prefix)
     BSONObj PingMonitorThreadManager::createTarget( HostAndPort& hp , bool on=true , int interval=15 , string customCollectionPrefix="" ){
 	BSONObjBuilder toReturn;
 	BSONObj connInfo = getConnInfo( hp );
 
-	// check if we can connect to the host
-	if( connInfo["connectToHostFailed"].trueValue() ){ 
+	// check for connection errors
+	if( connInfo["errmsg"].trueValue() ){ 
 	    toReturn.append( "ok" , false );
-	    toReturn.append( ERRMSG , connInfo["connectToHostFailed"].valuestrsafe() );
+	    toReturn.append( ERRMSG , connInfo["errmsg"].valuestrsafe() );
 	    return toReturn.obj();
 	}
 
-	// check if we could connect to the admin database on the host 
-	if( connInfo["connectToAdminFailed"].trueValue() ){
-	    toReturn.append( "ok" , false );
-	    toReturn.append( ERRMSG , connInfo["connectToAdminFailed"].valuestrsafe() ); 
-	    return toReturn.obj();
-	}
-
-	// check if host is master of a network
-	if( connInfo["isNotMaster"].trueValue() ){
-	    toReturn.append( "ok" , false );
-	    toReturn.append( ERRMSG , connInfo["isNotMaster"].valuestrsafe() ); 
-	    return toReturn.obj();
-	}
-
-	// check if connect to config database failed
-	if( connInfo["connectToConfigFailed"].trueValue() ){
-	    toReturn.append( "ok" , false );
-	    toReturn.append( ERRMSG , connInfo["connectToConfigFailed"].valuestrsafe() ); 
-	    return toReturn.obj();
-	}
-
-	// if custom collectionPrefix setting is empty, use default
+	// if custom collectionPrefix setting is empty, use default 
 	if( customCollectionPrefix.empty() ){
 	    customCollectionPrefix = connInfo["collectionPrefix"].valuestrsafe();
 	}
@@ -200,7 +181,7 @@ namespace mongo {
 	    }
 	} 
 
-	// if we passed all these requirements, create a target with this host
+	// create a PingMonitor target with this host
 	PingMonitor *pmt = new PingMonitor( hp , on , interval , customCollectionPrefix , connInfo["networkType"].valuestrsafe() );
 	pmt->go();
 	targets[ hp ] = pmt;
@@ -208,40 +189,30 @@ namespace mongo {
 	return toReturn.obj();
     }
 
-    // check if the target is the master of a network
-    // masters: mongos, primary of replica set
-    // not masters: standalone mongod, secondary, arbiter
+    // check if we can connect to the host and determine the host's network type
     BSONObj PingMonitorThreadManager::getConnInfo( HostAndPort& hp ){
 	BSONObjBuilder toReturn;
-	BSONObj isMasterResults;
-        scoped_ptr<ScopedDbConnection> connPtr;
+	scoped_ptr<ScopedDbConnection> connPtr;
         try{
             connPtr.reset( new ScopedDbConnection( hp.toString() , socketTimeout ) ); 
             ScopedDbConnection& conn = *connPtr;
-	    try{
-		conn->runCommand( "admin" , BSON("isMaster"<<1) , isMasterResults );
-		if( isMasterResults["msg"].trueValue() ){
-		    toReturn.append( "networkType" , "shardedCluster" );
-		    try{	
-			scoped_ptr<DBClientCursor> cursor( conn->query( "config.version" , BSONObj() ) );
-			toReturn.append( "collectionPrefix" ,  cursor->nextSafe()["clusterId"].__oid().toString()); 
-		    } catch( DBException& e ){
-			toReturn.append( "connectToConfigFailed" , e.toString() );
-		    }
-		}
-		if( isMasterResults["setName"].trueValue() ){
-		    toReturn.append( "networkType" , "replicaSet" );
-		    toReturn.append( "collectionPrefix" , isMasterResults["setName"].valuestrsafe() );
-		}
-		else{
-		    toReturn.append( "isNotMaster" , false );
-		}
-	    } catch ( DBException& e ){
-		toReturn.append( "connectToAdminFailed" , e.toString() );
-	    }	    
+	    BSONObj isMasterResults;
+	    conn->runCommand( "admin" , BSON( "isMaster" << 1 ) , isMasterResults );
+
+	    if( isMasterResults["msg"].trueValue() ){
+		toReturn.append( "networkType" , shardedCluster );
+		scoped_ptr<DBClientCursor> cursor( conn->query( "config.version" , BSONObj() ) );
+		toReturn.append( "collectionPrefix" , cursor->nextSafe()["clusterId"].__oid().toString() ); 
+	    }
+	    else if( isMasterResults["setName"].trueValue() ){
+		toReturn.append( "networkType" , replicaSet );
+		toReturn.append( "collectionPrefix" , isMasterResults["setName"].valuestrsafe() );
+	    }
+	    else
+		toReturn.append( "isNotMaster" , false );
+
 	} catch( DBException& e ){
-	    toReturn.append( "connectToHostFailed" , e.toString() );
-	    return toReturn.obj();
+	    toReturn.append( "errmsg" , e.toString() );
 	}
 	connPtr->done();
 	return toReturn.obj();
@@ -266,6 +237,5 @@ namespace mongo {
 	else
 	    return false;
     }
-
 
 }

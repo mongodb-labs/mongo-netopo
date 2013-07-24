@@ -43,6 +43,9 @@ namespace mongo {
     const string PingMonitor::stats = "stats";
     const string PingMonitor::allNodes = "allNodes";
 
+    const string PingMonitor::replicaSet = "replicaSet";
+    const string PingMonitor::shardedCluster = "shardedCluster";
+
     // Error codes
     map< string , string > PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
     map< string , string > PingMonitor::initializeErrcodes(){
@@ -160,7 +163,7 @@ namespace mongo {
 		edgestr += srcElem.fieldName();
 		edgestr += " -> ";
 		edgestr += tgtElem.fieldName();
-		edgestr += tgtObj["pingTimeMicrosecs"].valuestrsafe();
+		edgestr += tgtObj["pingTimeMicros"].valuestrsafe();
 		edgeShow.append( edgestr , tgtObj["isConnected"].boolean() );
 	    }
 	}
@@ -179,13 +182,15 @@ namespace mongo {
 	if( on == false )
 	    return;
 
-	if( networkType == "replicaSet" )
+	if( networkType == replicaSet )
 	    doPingForReplset();
-	else if( networkType == "shardedCluster" )
+	else if( networkType == shardedCluster )
 	    doPingForCluster();
     }
 
     void PingMonitor::doPingForReplset(){
+
+	cout << "[PingMonitor::run()] : " << "PingMonitor thread for " << target.toString() << "  awake" << endl;
 
 	// create a typedef for the Graph type
 	// Add nodes to the graph
@@ -218,7 +223,7 @@ namespace mongo {
 	resultBuilder.append("idMap" , idMap);
 	resultBuilder.append("errors" , errors);
 	resultBuilder.append("warnings" , warnings); 
-	resultBuilder.append("currentTime" , jsTime() );
+	resultBuilder.appendDate("currTime" , curTimeMillis64() );
 
 	addNewNodes( nodes );
 	
@@ -233,7 +238,7 @@ namespace mongo {
 	}
 
 	calculateStats();
-
+	calculateDeltas();
 	numPings++;
     }
 
@@ -338,6 +343,8 @@ namespace mongo {
     }
 
     void PingMonitor::doPingForCluster(){
+    
+	cout << "[PingMonitor::run()] : " << "PingMonitor thread for " << target.toString() << "  awake" << endl;
 
 	// create a typedef for the Graph type
 	// Add nodes to the graph
@@ -374,9 +381,9 @@ namespace mongo {
 	resultBuilder.append("idMap" , idMap);
 	resultBuilder.append("errors" , errors);
 	resultBuilder.append("warnings" , warnings); 
-	resultBuilder.append("currentTime" , jsTime() );
+	resultBuilder.appendDate("currTime" , curTimeMillis64() );
 
-	addNewNodes( nodes );
+    	addNewNodes( nodes );
 	
 	BSONObj result = resultBuilder.obj();
 	bool written = writeMonitorData( result ); 
@@ -386,7 +393,7 @@ namespace mongo {
 	}
  
 	calculateStats();
-
+	calculateDeltas();
     }
 
     void PingMonitor::addNewNodes( BSONObj& nodes ){
@@ -603,57 +610,31 @@ namespace mongo {
     }
 
     void PingMonitor::buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
-	set< string > srcNodeIds;
-	set< string > tgtNodeIds;
-	nodes.getFieldNames( srcNodeIds );
-	nodes.getFieldNames( tgtNodeIds );
-
-	for (set<string>::iterator srcId = srcNodeIds.begin(); srcId!=srcNodeIds.end(); ++srcId){
-	    BSONElement srcElem = nodes[ *srcId ];
-	    BSONObj srcObj = srcElem.embeddedObject();
+	for (BSONObj::iterator srcId = nodes.begin(); srcId.more(); ){
+	    BSONElement srcElem = srcId.next();
+	    string srcHostName = srcElem.embeddedObject().getStringField("hostName");
 	    BSONObjBuilder srcEdges;
-	    string srcHostName = srcObj.getStringField("hostName"); 
-	    for( set<string>::iterator tgtId = tgtNodeIds.begin(); tgtId!=tgtNodeIds.end(); ++tgtId ){
-		BSONElement tgtElem = nodes[ *tgtId ];
-		BSONObj tgtObj = tgtElem.embeddedObject();
+	    for( BSONObj::iterator tgtId = nodes.begin(); tgtId.more(); ){
+		BSONElement tgtElem = tgtId.next();
+		string tgtHostName = tgtElem.embeddedObject().getStringField("hostName"); 
 		BSONObjBuilder newEdge;
-    		string tgtHostName = tgtObj.getStringField("hostName"); 
-		BSONObj cmdReturned;
 		try{ 
 		    ScopedDbConnection conn( srcHostName , socketTimeout ); 
-		    try{
-			BSONObjBuilder pingCmdBuilder;
-			pingCmdBuilder.append( "ping" , 1 );
-			BSONObj hostObj = BSON( "0" << tgtHostName );
-			pingCmdBuilder.appendArray( "hosts" , hostObj );
-			BSONObj pingCmd = pingCmdBuilder.obj();
-			conn->runCommand( "admin" , pingCmd , cmdReturned );	
-		    }
-		    catch ( DBException& e ){ 
-			newEdge.append( "isConnected" , "false" );
-			newEdge.append( "errmsg" , e.toString() );
-			continue;
-			cout << "[PingMonitor::buildGraph()] : " << e.toString() << endl;
-		    } 
+		    // create deep ping command in the form { ping : 1 , hosts : [ ] }
+		    BSONObjBuilder pingCmdBuilder;
+		    pingCmdBuilder.append( "ping" , 1 );
+		    BSONObj hostObj = BSON( "0" << tgtHostName );
+		    pingCmdBuilder.appendArray( "hosts" , hostObj );
+		    BSONObj pingCmd = pingCmdBuilder.obj();
+		    BSONObj cmdReturned;
+		    // run deep ping
+		    conn->runCommand( "admin" , pingCmd , cmdReturned );	
+		    srcEdges.append( tgtElem.fieldName() , cmdReturned.getObjectField( tgtHostName ) );
 		    conn.done();
 		}
 		catch( DBException& e ){
 		    cout << "[PingMonitor::buildGraph()] : " << e.toString() << endl;
 		}
-		BSONObj edgeInfo = cmdReturned.getObjectField( tgtHostName );
-		if( edgeInfo["isConnected"].boolean() == false ){
-		    newEdge.append( "isConnected" , false );
-		    newEdge.append( "errmsg" , edgeInfo["errmsg"].valuestrsafe() );
-		}
-		else{
-		    newEdge.append( "isConnected" , true );
-		    newEdge.append( "pingTimeMicrosecs" , edgeInfo["pingTimeMicrosecs"].valuestrsafe() );
-		}
-		newEdge.append( "bytesSent" , edgeInfo["bytesSent"].numberLong() );
-		newEdge.append( "bytesReceived" , edgeInfo["bytesReceived"].numberLong() );
-		newEdge.append( "incomingSocketExceptions" , edgeInfo["incomingSocketExceptions"].numberLong() );
-		newEdge.append( "outgoingSocketExceptions" , edgeInfo["outgoingSocketExceptions"].numberLong() );
-		srcEdges.append( tgtElem.fieldName() , newEdge.obj() );  
 	    }
 	    edges.append( srcElem.fieldName() , srcEdges.obj() );
 	}
@@ -763,7 +744,7 @@ namespace mongo {
 
 		// initialize maps
 		// first one is a three dimensional map of ping times to edges at every point in time
-		map< int , map< string , map<string, int> > > pingTime; // only used for intermediate steps;
+		map< int , map< string , map<string, long long> > > pingTime; // only used for intermediate steps;
 	    	map< string , map<string, int> > numPingAttempts;
 		map< string , map<string, int> > numSuccessful;
 		map< string , map<string, int> > numFailed;
@@ -774,10 +755,12 @@ namespace mongo {
 		map< string , map<string, double> > avgPingTime;
 		map< string , map<string, double> > pingTimeStdDev;
 		map< string , map<string, double> > subtractMeanSquaredSum ; // only used for intermediate steps
+		/*
 		map< string , map<string, long long> > totalOutSocketExceptions;
 		map< string , map<string, long long> > totalInSocketExceptions; 
 		map< string , map<string, long long> > totalBytesSent;
 		map< string , map<string, long long> > totalBytesRecd;
+		*/
 
 		// initialize values (many need to be compared) 
 		for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
@@ -794,10 +777,12 @@ namespace mongo {
 			    avgPingTime[ *src ][ *tgt ] = 0;
 			    pingTimeStdDev[ *src ][ *tgt ] = 0;
 			    subtractMeanSquaredSum[ *src ][ *tgt ] = 0;
+			    /*
 			    totalOutSocketExceptions[ *src ][ *tgt ] = 0;
 			    totalInSocketExceptions[ *src ][ *tgt ] = 0;
 			    totalBytesSent[ *src ][ *tgt ] = 0;
 			    totalBytesRecd[ *src ][ *tgt ] = 0;
+			    */
 			}
 		    }
 		}
@@ -819,15 +804,24 @@ namespace mongo {
 				string tgtNum = currIds[ *tgt ].valuestrsafe();
 				BSONObj edge = currEdges.getObjectField( srcNum ).getObjectField( tgtNum );
 				// ping time
-				if( edge["pingTimeMicrosecs"].trueValue() )
-				    pingTime[ count ][ *src ][ *tgt ] = atoi( edge["pingTimeMicrosecs"].valuestrsafe() );	
+				if( edge["pingTimeMicros"].trueValue() )
+				    pingTime[ count ][ *src ][ *tgt ] = edge["pingTimeMicros"].numberLong();	
 				else
 				    pingTime[ count ][ *src ][ *tgt ] = 0;
+
 				// socket exceptions and bytes sent/recd
+				/*
+				SocketException::Type i = SocketException::CLOSED;
+				SocketException::Type end = SocketException::CONNECT_ERROR;
+				while( i < end ){
+				    targetInfo.append( SocketException::_getStringType(i) , SocketException::numExceptions( i , target ));
+				    i = static_cast<SocketException::Type>( static_cast<int>(i) + 1 );
+				}
 				totalOutSocketExceptions[ *src ][ *tgt ] += edge["outgoingSocketExceptions"].numberLong();
 				totalInSocketExceptions[ *src ][ *tgt ] += edge["incomingSocketExceptions"].numberLong();
 				totalBytesSent[ *src ][ *tgt ] += edge["bytesSent"].numberLong();
-				totalBytesRecd[ *src ][ *tgt ] += edge["bytesReceived"].numberLong();
+				totalBytesRecd[ *src ][ *tgt ] += edge["bytesRecd"].numberLong();
+				*/
 			    }
 			    else
 				pingTime[ count ][ *src ][ *tgt ] = -1;
@@ -912,10 +906,12 @@ namespace mongo {
 				tgtBuilder.append( "minPingTime" , minPingTime[ *src ][ *tgt ] );
 			    tgtBuilder.append( "avgPingTime" , avgPingTime[ *src ][ *tgt ] );
 			    tgtBuilder.append( "pingTimeStdDev" , pingTimeStdDev[ *src ][ *tgt ] ); 
+			    /*
 			    tgtBuilder.append( "totalOutSocketExceptions" , totalOutSocketExceptions[ *src ][ *tgt ] );
 			    tgtBuilder.append( "totalInSocketExceptions" , totalInSocketExceptions[ *src ][ *tgt ] ); 
 			    tgtBuilder.append( "totalBytesSent" , totalBytesSent[ *src ][ *tgt ] );
 			    tgtBuilder.append( "totalBytesRecd" , totalBytesRecd[ *src ][ *tgt ] );
+			    */	
 			    srcBuilder.append( *tgt , tgtBuilder.obj() );
 			}
 		    }
@@ -931,6 +927,146 @@ namespace mongo {
 	}
     }
 
+    bool hasNotice( vector<BSONElement>& v , string notice ){
+	for( vector<BSONElement>::iterator i = v.begin(); i!=v.end(); ++i){
+	    if( notice.compare(i->String()) != 0 )
+		return true;
+	} 
+	return false;
+    }
+
+    void PingMonitor::calculateDeltas(){
+	scoped_ptr<ScopedDbConnection> connPtr;
+	auto_ptr<DBClientCursor> cursor;
+	try{
+	    connPtr.reset( new ScopedDbConnection( self.toString() ) ); 
+	    ScopedDbConnection& conn = *connPtr;
+	    cursor = conn->query( graphsLocation , Query(BSONObj()) );
+	    if( cursor->more() == false ){
+		// no graphs data to read from
+		// TODO: do we need to log this? depends on how calculateDeltas is called
+		// ERRCODES["NO_DATA"]
+		connPtr->done();
+		return;
+	    }
+	    else{
+		int count = 0;
+		BSONObj prev;
+		BSONObj prevErrors;
+		BSONObj prevWarnings;
+		BSONObj prevIdMap;
+		while( cursor->more() ){
+		    BSONObj curr = cursor->nextSafe();
+		    BSONObj currErrors = curr.getObjectField("errors");
+		    BSONObj currWarnings = curr.getObjectField("warnings");
+		    BSONObj currIdMap = curr.getObjectField("idMap");
+		    if( count > 0 ){
+			BSONArrayBuilder newErrors;
+			BSONArrayBuilder newWarnings;
+			BSONArrayBuilder newNodes;
+			BSONArrayBuilder removedErrors;
+			BSONArrayBuilder removedWarnings;
+			BSONArrayBuilder removedNodes;
+
+			// check for new nodes
+			for( BSONObj::iterator i = currIdMap.begin(); i.more(); ){
+			    string currKey = i.next().fieldName();
+			    if( prevIdMap[ currKey ].eoo() == true )
+				newNodes.append( currKey );
+			}
+
+			// check for removed nodes
+			for( BSONObj::iterator i = prevIdMap.begin(); i.more(); ){
+			    string prevKey = i.next().fieldName();
+			    if( currIdMap[ prevKey ].eoo() == true )
+				removedNodes.append( prevKey );
+			}
+
+			// check for new errors
+			for( BSONObj::iterator i = currErrors.begin(); i.more(); ){
+			    BSONElement currNode = i.next();
+			    if( prevErrors[ currNode.fieldName() ].trueValue() == false )
+				continue;
+			    vector<BSONElement> currNodeErrors = currNode.Array(); 
+			    vector<BSONElement> prevNodeErrors = prevErrors[ currNode.fieldName() ].Array();
+			    for( vector<BSONElement>::iterator i = currNodeErrors.begin(); i!=currNodeErrors.end(); ++i){
+				if( hasNotice( prevNodeErrors , i->String() ) == false)
+				    newErrors.append( i->String() );	
+			    }
+			}
+
+			// check for removed errors
+			for( BSONObj::iterator i = prevErrors.begin(); i.more(); ){
+			    BSONElement prevNode = i.next();
+			    if( currErrors[ prevNode.fieldName() ].trueValue() == false )
+				continue;
+			    vector<BSONElement> prevNodeErrors = prevNode.Array(); 
+			    vector<BSONElement> currNodeErrors = currErrors[ prevNode.fieldName() ].Array();
+			    for( vector<BSONElement>::iterator i = prevNodeErrors.begin(); i!=prevNodeErrors.end(); ++i){
+				if( hasNotice( currNodeErrors , i->String() ) == false)
+				    removedErrors.append( i->String() );	
+			    }
+			}
+
+			// check for new warnings
+			for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
+			    BSONElement currNode = i.next();
+			    if( prevWarnings[ currNode.fieldName() ].trueValue() == false )
+				continue;
+			    vector<BSONElement> currNodeWarnings = currNode.Array(); 
+			    vector<BSONElement> prevNodeWarnings = prevWarnings[ currNode.fieldName() ].Array();
+			  //  cout << "curr warnings : " << currNodeWarnings << endl;
+			  //  cout << "prev warnings : " << prevNodeWarnings << endl;
+			    for( vector<BSONElement>::iterator i = currNodeWarnings.begin(); i!=currNodeWarnings.end(); ++i){
+				if( hasNotice( prevNodeWarnings , i->String() ) == false)
+				    newWarnings.append( i->String() );	
+			    }
+			}
+
+			// check for removed warnings
+			for( BSONObj::iterator i = prevWarnings.begin(); i.more(); ){
+			    BSONElement prevNode = i.next();
+			    if( currWarnings[ prevNode.fieldName() ].trueValue() == false )
+				continue;
+			    vector<BSONElement> prevNodeWarnings = prevNode.Array(); 
+			    vector<BSONElement> currNodeWarnings = currWarnings[ prevNode.fieldName() ].Array();
+			    for( vector<BSONElement>::iterator i = prevNodeWarnings.begin(); i!=prevNodeWarnings.end(); ++i){
+				if( hasNotice( currNodeWarnings , i->String() ) == false)
+				    removedWarnings.append( i->String() );	
+			    }
+			}
+
+
+			// save all deltas to the database
+
+			BSONObjBuilder idBuilder;
+			idBuilder.append( "currTime" , curr["currTime"].date() );
+			idBuilder.append( "prevTime" , prev["currTime"].date() );
+
+			BSONObjBuilder deltasBuilder;
+			deltasBuilder.append( "currTime" , curr["currTime"].date() );
+			deltasBuilder.append( "prevTime" , prev["currTime"].date() );
+			deltasBuilder.append( "newNodes" , newNodes.arr() );
+			deltasBuilder.append( "newErrors" , newErrors.arr() );
+			deltasBuilder.append( "newWarnings" , newWarnings.arr() ); 
+			deltasBuilder.append( "removedNodes" , removedNodes.arr() );
+			deltasBuilder.append( "removedErrors" , removedErrors.arr() );
+			deltasBuilder.append( "removedWarnings" , removedWarnings.arr() ); 
+			conn->update( deltasLocation , idBuilder.obj() , deltasBuilder.obj() , true); 
+
+		    }
+		    prev = curr;
+		    prevErrors = currErrors;
+		    prevWarnings = currWarnings;
+		    prevIdMap = currIdMap;
+		    count++;
+		}
+	    }
+	} catch( DBException& e ){
+	    cout << "[PingMonitor::calculateDeltas()] : " << e.toString() << endl;
+	}
+	connPtr->done();
+    }
 
     void PingMonitor::shutdown(){
 	alive = false;
@@ -945,8 +1081,7 @@ namespace mongo {
     void PingMonitor::run() {
 	lastPingNetworkMillis = 0;
 	while ( ! inShutdown() && alive ) {
-	    cout << "[PingMonitor::run()] : " << "PingMonitor thread for " << target.toString() << "  awake" << endl;
-
+	    
 	    /*
 	    if( lockedForWriting() ) {
 		// note: this is not perfect as you can go into fsync+lock between

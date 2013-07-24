@@ -68,6 +68,9 @@
 
 	static BSONObj getConnInfo( HostAndPort& hp );
 
+	static const string replicaSet;
+	static const string shardedCluster;
+
 	static const string NO_SUCH_TARGET; 
 	static const string INVALID_COLLECTION_CHARACTER;
 	static const string TARGET_NOT_NETWORK_MASTER;

@@ -17,14 +17,6 @@
 */
 
 #include "mongo/pch.h"
-
-#include <time.h>
-#include "boost/date_time/posix_time/posix_time.hpp"
-#include "mongo/client/parallel.h"
-#include "mongo/client/connpool.h"
-#include <sstream>
-#include "mongo/util/assert_util.h"
-
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/dbclient_rs.h"
 #include "mongo/db/auth/action_set.h"
@@ -50,6 +42,12 @@
 #include "mongo/util/processinfo.h"
 #include "mongo/util/ramlog.h"
 #include "mongo/util/version.h"
+// added
+#include "mongo/util/time_support.h"
+#include "mongo/client/parallel.h"
+#include "mongo/client/connpool.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/client/dbclientinterface.h"
 
 namespace mongo {
 
@@ -138,7 +136,7 @@ namespace mongo {
     public:
         PingCommand() : Command( "ping" ) {}
         virtual bool slaveOk() const { return true; }
-        virtual void help( stringstream &help ) const { help << "a way to check that the server is alive. responds immediately even if server is in a db lock."; }
+        virtual void help( stringstream &help ) const { help << "If only { ping : 1 } passed, a way to check that the server is alive. Responds immediately even if server is in a db lock. If { ping : 1 , hosts : [ an array of host:port strings ] } is passed, conducts a deep ping returning diagnostic information about the connection between this instance and each host:port target."; }
         virtual LockType locktype() const { return NONE; }
         virtual void addRequiredPrivileges(const std::string& dbname,
                                            const BSONObj& cmdObj,
@@ -147,83 +145,63 @@ namespace mongo {
 	virtual bool run(const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
             // IMPORTANT: Don't put anything in here that might lock db - including authentication
 	    
-	    //do a simple ping unless a "deep" ping is requested
-	    if(!(cmdObj["hosts"].trueValue()))
+	    //do a simple ping unless a "deep" ping with an array of hosts is requested
+	    if( cmdObj["hosts"].trueValue() == false )
 		return true;
 
-	    using namespace bson;
-	    
-	    //result.appendDate( "currentTime" , jsTime() );
-
 	    vector<BSONElement> v = cmdObj.getField("hosts").Array();
-	    BSONObj outCommand = BSON("ping" << 1);
-	    string db = "admin";
+	    string adminDB = "admin";
     
-	    //for each host:port in the array
-	    for( vector<BSONElement>::iterator it = v.begin(), end = v.end(); it!= end; ++it)
+	    // for each host:port target passed in, collect raw data about the connection
+	    // between this instance and the target
+	    for( vector<BSONElement>::iterator it = v.begin(), end = v.end(); it != end; ++it)
 	    {
-		BSONObjBuilder currServer;
-		HostAndPort hp = it->String();
-		DBClientConnection dbc;
-	
-		int numSocketExceptions = 0;
-		const int retryMax = 3;
-		for (int retryCount = 1; retryCount <= retryMax; ++retryCount) {
-    		    try{	
-			string connInfo;
-			BSONObj pingInfo;
-//			throw SocketException( SocketException::CONNECT_ERROR  , "" );	
-			bool connected = dbc.connect(hp.toString(true), connInfo);	
-		    	if(connected) {				
-			    currServer.append("isConnected" , true );
-			    if(connInfo != "")
-				currServer.append("connInfo" , connInfo);	
-			    
-			    //time a ping	
-			    using namespace boost::posix_time;
-			    ptime time_start(microsec_clock::local_time());	
-			    dbc.runCommand(db, outCommand, pingInfo);
-			    ptime time_end(microsec_clock::local_time());
-			    time_duration duration(time_end - time_start);
-			    std::stringstream strstream;
-			    strstream << duration.total_microseconds();
-			    currServer.append("pingTimeMicrosecs", strstream.str()); 
-			   
-			    // currServer.append("pingTimeMicrosecs" , duration.total_microseconds() ); 
-			    
-			    //append message returned from the shallow ping  if more than { "ok : 1 } 
-			    if(pingInfo.toString().size() > 11) 
-				currServer.append("pingInfo", pingInfo);
-		
-			    //TODO: other connection diagnostics here eventually
-		
-			    break; //no socket exception, so do not retry	
-			}
-			else{
-			    currServer.append("isConnected" , false );
-			    currServer.append("connInfo", connInfo);
-				    break; //no socket exception, so do not retry
-			}
-		    }
-		    catch (const SocketException& e) {
-			numSocketExceptions++; 
-			continue; // try again
-		    }   
+		HostAndPort target;
+		target = HostAndPort( it->String() ); // throws user assertion if invalid
+		BSONObjBuilder targetInfo;
+		scoped_ptr<ScopedDbConnection> connPtr;
+
+		try{	
+		    connPtr.reset( new ScopedDbConnection( target.toString() ) );
+		    ScopedDbConnection& conn = *connPtr;
+		    targetInfo.append("isConnected" , true );
+
+		    //time a ping	
+		    BSONObj pingCommand = BSON( "ping" << 1 );
+		    BSONObj pingReturned;
+		    long long startTime = curTimeMicros64();
+		    conn->runCommand(adminDB , pingCommand , pingReturned );
+		    long long endTime = curTimeMicros64();
+		    targetInfo.append("pingTimeMicros", endTime - startTime ); 
+    
+		    // TODO: other connection diagnostics here
+
+		    connPtr->done();
+	    	}
+		catch ( DBException& e) {
+		    targetInfo.append("isConnected" , false );
+		    targetInfo.append("exceptionInfo", e.toString() );
+		}   
+
+		//note the amount of data sent and received between this instance and this target
+		long long bytesSent = Socket::getBytesSent( target );
+		long long bytesRecd = Socket::getBytesReceived( target );
+		if( bytesSent > 0 )
+		    targetInfo.append( "bytesSent" , bytesSent );
+		if( bytesRecd > 0 )
+		    targetInfo.append( "bytesRecd" , bytesRecd );
+			
+		//note the number of socket exceptions of each type between this instance and this target 
+		SocketException::Type i = SocketException::CLOSED;
+		SocketException::Type end = SocketException::CONNECT_ERROR;
+		while( i < end ){
+		    long long numExceptions = SocketException::numExceptions( i , target );
+		    if( numExceptions > 0 ) 
+			 targetInfo.append( SocketException::_getStringType(i) , numExceptions );
+		    i = static_cast<SocketException::Type>( static_cast<int>(i) + 1 );
 		}
 
-		//note the amount of data received from this host
-		currServer.append("bytesReceived" , Socket::getBytesReceived( hp ));	
-		//note the amount of data sent to this host
-		currServer.append("bytesSent" , Socket::getBytesSent( hp ));	   
-		
-		//count the number of socket exceptions seen to or from this host 
-		currServer.append("incomingSocketExceptions" , SocketException::numIncomingExceptions( hp ));
-		currServer.append("outgoingSocketExceptions" , SocketException::numOutgoingExceptions( hp ));
-
-		//count the number of socket exceptions seen to this host while trying to ping it 
-		currServer.append("clientSocketExceptions" , numSocketExceptions);
-
-		result.append(it->String(), currServer.obj());
+    		result.append( target.toString() , targetInfo.obj() );
 	    }
 	    return true;
 	}

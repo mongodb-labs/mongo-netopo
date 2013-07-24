@@ -393,34 +393,32 @@ namespace mongo {
     
     boost::mutex SocketException::_mutex;
 
-    std::map< string , long long > SocketException::incomingExceptions;
-    std::map< string , long long > SocketException::outgoingExceptions;
+    std::map< std::pair<string,string> , long long > SocketException::exceptions;
 
-    long long SocketException::numIncomingExceptions( std::string remoteHost ){
-	return incomingExceptions[ remoteHost ];
-    }
-    long long SocketException::numOutgoingExceptions( std::string remoteHost ){
-	return outgoingExceptions[ remoteHost ];
+    long long SocketException::numExceptions( Type t , string remoteHost ){
+	pair< string , string > key;
+	key = make_pair( _getStringType(t) , remoteHost );
+	return exceptions[ key ];
     }
 
     // ------------ Socket -----------------
 
-    std::map< string , long long > Socket::dataSentHistory;
-    std::map< string , long long > Socket::dataRecvHistory;
+    std::map< string , long long > Socket::bytesSent;
+    std::map< string , long long > Socket::bytesRecd;
 
     boost::mutex Socket::_mutex;
 
     long long Socket::getBytesSent( string remoteHost ){
-	return dataSentHistory[ remoteHost ];	
+	return bytesSent[ remoteHost ];	
     }
     long long Socket::getBytesReceived( string remoteHost ){
-	return dataRecvHistory[ remoteHost ];
+	return bytesRecd[ remoteHost ];
     }
 
     string Socket::getHostsReceivedFrom( string remoteHost ){
 	string out = ""; 
 	std::map< string , long long >::iterator it;
-	for( std::map< string , long long>::iterator it=dataRecvHistory.begin(); it!=dataRecvHistory.end(); ++it){
+	for( std::map< string , long long>::iterator it=bytesRecd.begin(); it!=bytesRecd.end(); ++it){
 	    out = out + it->first; 
 	    out = out + " amountData: " + boost::lexical_cast<std::string>(it->second);
 	    out = out + ", ";
@@ -431,7 +429,7 @@ namespace mongo {
     string Socket::getHostsSentTo( std::string remoteHost ){
 	string out = ""; 
 	std::map< string , long long >::iterator it;
-	for( std::map< string , long long>::iterator it=dataSentHistory.begin(); it!=dataSentHistory.end(); ++it){
+	for( std::map< string , long long>::iterator it=bytesSent.begin(); it!=bytesSent.end(); ++it){
 	    out = out + it->first; 
 	    out = out + " amountData: " + boost::lexical_cast<std::string>(it->second);
 	    out = out + ", ";
@@ -606,7 +604,7 @@ namespace mongo {
 	    remoteHostNameString = remoteHostNameString + ":" + remotePort; 
 
 	    boost::mutex::scoped_lock lk( _mutex );
-	    dataSentHistory[ remoteHostNameString ] += ret; 
+	    bytesSent[ remoteHostNameString ] += ret; 
           
 	    fassert(16507, ret <= len);
             len -= ret;
@@ -746,7 +744,7 @@ namespace mongo {
 	remoteHostNameString = remoteHostNameString + ":" + remotePort;
 
 	boost::mutex::scoped_lock lk( _mutex );
-	dataRecvHistory[ remoteHostNameString ] += x; 
+	bytesRecd[ remoteHostNameString ] += x; 
           
 	return x;
     }

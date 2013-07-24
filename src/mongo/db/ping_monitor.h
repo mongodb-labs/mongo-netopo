@@ -59,16 +59,6 @@
 	    deltasLocation = db+"."+outerCollection+"."+collectionPrefix+"."+deltas;
 	    allNodesLocation = db+"."+outerCollection+"."+collectionPrefix+"."+allNodes;
 
-
-/*	    BSONObj isMasterResults;
-	    dbc.runCommand( "admin" , BSON("isMaster"<<1) , isMasterResults );
-            if( isMasterResults["msg"].trueValue() )
-                db = "config";
-            if( isMasterResults["setName"].trueValue() )
-                db = "local";
-*/
-
-//	    cout << "my HostAndPort : " << HostAndPort::me().toString() << endl;
 	    alive = true;
 	}
 
@@ -126,6 +116,10 @@
 	static const string deltas;
 	static const string stats;
 	static const string allNodes;
+
+	static const string replicaSet;
+	static const string shardedCluster;
+
 	
     	virtual void run();
 	void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
@@ -136,8 +130,6 @@
 	void doPingForReplset();
 
 	void getSetServers( HostAndPort& target , BSONObjBuilder& nodesBuilder , map< string , vector<string> >& errorsBuilder , map< string, vector<string> >& warningsBuilder );
-
-
 
 	void doPingForCluster();
 

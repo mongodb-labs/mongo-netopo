@@ -44,6 +44,7 @@
 
 #include "mongo/platform/compiler.h"
 
+//added
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/thread.hpp>
 
@@ -150,16 +151,13 @@ namespace mongo {
               _server(server),
               _extra(extra)
 	{
-	    // TODO: include time of exception 
-	    //use timestamp instead?
-	    //std::time_t time = std::time(NULL);
-	    //recordException( t , server , time ); 
-
+	    
 	    boost::mutex::scoped_lock lk( _mutex ); 
-	    if( server == prettyHostName() )
-		incomingExceptions[ server ]++;
-	    else
-		outgoingExceptions[ server ]++;
+//	    if( server.compare( ) ) // how to determine if socketexception is from a client or server connection?
+	    pair< string , string > key;
+	    key = make_pair( _getStringType(t) , server );
+	    exceptions[ key ]++;
+	    
 	}
 
 
@@ -169,19 +167,11 @@ namespace mongo {
         virtual string toString() const;
         virtual const std::string* server() const { return &_server; }
 
-	// return the number of socket exceptions this server has seen to a particular remote host
-	static long long numIncomingExceptions( std::string remoteHost );	
-	static long long numOutgoingExceptions( std::string remoteHost ); 
-	
-    private:
-	
-	static boost::mutex _mutex;
+	// return the number of socket exceptions of a particular type
+	//  this server has seen to a particular remote host
+	static long long numExceptions( Type t , string remoteHost );	
 
-	// store the number of SocketExceptions thrown by this server
-	static std::map< std::string, long long> outgoingExceptions;
-	static std::map< std::string, long long> incomingExceptions;
-
-        // TODO: Allow exceptions better control over their messages
+	// TODO: Allow exceptions better control over their messages
         static string _getStringType( Type t ){
             switch (t) {
                 case CLOSED:        return "CLOSED";
@@ -194,6 +184,15 @@ namespace mongo {
                 default:            return "UNKNOWN"; // should never happen
             }
         }
+
+
+    private:
+	
+	static boost::mutex _mutex;
+
+	// store the number of each type of SocketExceptions thrown
+	// from a connection between this instance and another server
+	static map< pair<string,string> , long long> exceptions;
 
         string _server;
         string _extra;
@@ -277,8 +276,8 @@ namespace mongo {
 
     private:
 
-	static std::map< string, long long> dataSentHistory;
-	static std::map< string, long long> dataRecvHistory;
+	static std::map< string, long long> bytesSent;
+	static std::map< string, long long> bytesRecd;
 
 	static boost::mutex _mutex;
 	
