@@ -157,7 +157,7 @@ namespace mongo {
 	    for( vector<BSONElement>::iterator it = v.begin(), end = v.end(); it != end; ++it)
 	    {
 		HostAndPort target;
-		target = HostAndPort( it->String() ); // throws user assertion if invalid
+		target = HostAndPort( it->String() ); 
 		BSONObjBuilder targetInfo;
 		scoped_ptr<ScopedDbConnection> connPtr;
 

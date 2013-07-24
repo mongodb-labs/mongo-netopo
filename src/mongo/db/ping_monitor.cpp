@@ -541,12 +541,11 @@ namespace mongo {
 		    nodes.append( idString , newHost.obj() );
 		} 
 	    }
+	connPtr->done();
 	}
 	catch( DBException& e ){
 	    cout << "[PingMonitor::getShardServers()] : " << e.toString() << endl;
 	}
-
-	connPtr->done();
 	return index;
     }
 
@@ -573,39 +572,67 @@ namespace mongo {
 		sprintf(idString , "%d" , id);
 		nodes.append( idString , newHost.obj() );
 	    }
+	connPtr->done();
 	} catch( DBException& e) {
 	    cout << "[PingMonitor::getShardServers()] : " << e.toString() << endl;
 	}
-	connPtr->done();
 	return index;
     }
 
-    //TODO : only captures a single config server
     int PingMonitor::getConfigServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 	scoped_ptr<ScopedDbConnection> connPtr;
+	string delimiter = ",";
 	try{
 	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
 	    ScopedDbConnection& conn = *connPtr;
 	    BSONObj cmdReturned;
-	    conn->runCommand( "admin" , BSON("getCmdLineOpts"<<1) , cmdReturned );
-	    string host = cmdReturned["parsed"]["configdb"].valuestrsafe();
+	    conn->runCommand("admin" , BSON("getCmdLineOpts"<<1) , cmdReturned ); 
+
+	    string hosts = cmdReturned["parsed"]["configdb"].valuestrsafe();
+
+	    int count = 0;
+	    size_t currPos = 0;
+	    string currToken;	
+	    while( (currPos = hosts.find(delimiter)) != string::npos ){
+		currToken = hosts.substr(0 , currPos);
+		int id = index;
+		index++;
+		BSONObjBuilder newHost;
+		newHost.append( "hostName" , currToken );
+		newHost.append( "machine" , "" );
+		newHost.append( "key" , currToken + "_" + "" + "_" + "mongod" );
+		BSONObj type;	
+		if( count == 0 )
+		    type = BSON( "process" << "mongod" << "role" << "config" );
+		else
+		    type = BSON( "process" << "mongod" << "role" << "config" );
+		newHost.append( "type" , type );
+		collectClientInfo( currToken , newHost , type , errors , warnings );
+		char idString[100];
+		sprintf(idString , "%d" , id);
+		nodes.append( idString , newHost.obj() );
+		hosts.erase(0, currPos + delimiter.length());
+		count++; 
+	    }			
+
 	    int id = index;
 	    index++;
 	    BSONObjBuilder newHost;
-	    newHost.append( "hostName" , host );
+	    newHost.append( "hostName" , hosts );
 	    newHost.append( "machine" , "" );
-	    newHost.append( "key" , host + "_" + "" + "_" + "mongod" );
+	    newHost.append( "key" , hosts + "_" + "" + "_" + "mongod" );
 	    BSONObj type = BSON( "process" << "mongod" << "role" << "config" );
 	    newHost.append( "type" , type );
-	    collectClientInfo( host , newHost , type , errors , warnings );
+	    collectClientInfo( HostAndPort(currToken) , newHost , type , errors , warnings );
 	    char idString[100];
-	    sprintf(idString, "%d", id);
-	    nodes.append( idString, newHost.obj() ); 
+	    sprintf(idString , "%d" , id);
+	    nodes.append( idString , newHost.obj() );
+
+	    connPtr->done();
 	} 
 	catch( DBException& e) {
 	    cout << "[PingMonitor::getShardServers()] : " << "Couldn't connect to config server" << endl;
 	}
-	connPtr->done();
 	return index;
     }
 
