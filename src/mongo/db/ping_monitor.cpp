@@ -589,6 +589,7 @@ namespace mongo {
 	    conn->runCommand("admin" , BSON("getCmdLineOpts"<<1) , cmdReturned ); 
 
 	    string hosts = cmdReturned["parsed"]["configdb"].valuestrsafe();
+	    cout << "config host : " << hosts << endl;
 
 	    int count = 0;
 	    size_t currPos = 0;
@@ -623,7 +624,7 @@ namespace mongo {
 	    newHost.append( "key" , hosts + "_" + "" + "_" + "mongod" );
 	    BSONObj type = BSON( "process" << "mongod" << "role" << "config" );
 	    newHost.append( "type" , type );
-	    collectClientInfo( HostAndPort(currToken) , newHost , type , errors , warnings );
+	    collectClientInfo( HostAndPort(hosts) , newHost , type , errors , warnings );
 	    char idString[100];
 	    sprintf(idString , "%d" , id);
 	    nodes.append( idString , newHost.obj() );
@@ -916,38 +917,35 @@ namespace mongo {
 		}
 
 		// save all stats figures to the database
-		BSONObjBuilder statsBuilder;
 		for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
-		    BSONObjBuilder srcBuilder;
 		    for( vector<string>::iterator tgt=allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
 			if( (*src).compare( *tgt ) != 0 ){
-			    BSONObjBuilder tgtBuilder;
-			    tgtBuilder.append( "numPingAttempts" , numPingAttempts[ *src ][ *tgt ] );
-			    tgtBuilder.append( "numSuccessful" , numSuccessful[ *src ][ *tgt ] );
-			    tgtBuilder.append( "numFailed" , numFailed[ *src ][ *tgt ] );
-			    tgtBuilder.append( "percentConnected" , percentConnected[ *src ][ *tgt ] ); 
-			    tgtBuilder.append( "maxPingTime" , maxPingTime[ *src ][ *tgt ] );
-			    if( minPingTime[ *src ][ *tgt ] == INT_MAX )
-				tgtBuilder.append( "minPingTime" , "INT_MAX" );
-			    else
-				tgtBuilder.append( "minPingTime" , minPingTime[ *src ][ *tgt ] );
-			    tgtBuilder.append( "avgPingTime" , avgPingTime[ *src ][ *tgt ] );
-			    tgtBuilder.append( "pingTimeStdDev" , pingTimeStdDev[ *src ][ *tgt ] ); 
+			    BSONObjBuilder edge;
+			    edge.append( "source" , *src );
+			    edge.append( "target" , *tgt );
+			    edge.append( "numPingAttempts" , numPingAttempts[ *src ][ *tgt ] );
+			    edge.append( "numSuccessful" , numSuccessful[ *src ][ *tgt ] );
+			    edge.append( "numFailed" , numFailed[ *src ][ *tgt ] );
+			    edge.append( "percentConnected" , percentConnected[ *src ][ *tgt ] ); 
+			    edge.append( "maxPingTime" , maxPingTime[ *src ][ *tgt ] );
+			    edge.append( "minPingTime" , minPingTime[ *src ][ *tgt ] );
+			    edge.append( "avgPingTime" , avgPingTime[ *src ][ *tgt ] );
+			    edge.append( "pingTimeStdDev" , pingTimeStdDev[ *src ][ *tgt ] ); 
 			    /*
-			    tgtBuilder.append( "totalOutSocketExceptions" , totalOutSocketExceptions[ *src ][ *tgt ] );
-			    tgtBuilder.append( "totalInSocketExceptions" , totalInSocketExceptions[ *src ][ *tgt ] ); 
-			    tgtBuilder.append( "totalBytesSent" , totalBytesSent[ *src ][ *tgt ] );
-			    tgtBuilder.append( "totalBytesRecd" , totalBytesRecd[ *src ][ *tgt ] );
+			    edge.append( "totalOutSocketExceptions" , totalOutSocketExceptions[ *src ][ *tgt ] );
+			    edge.append( "totalInSocketExceptions" , totalInSocketExceptions[ *src ][ *tgt ] ); 
+			    edge.append( "totalBytesSent" , totalBytesSent[ *src ][ *tgt ] );
+			    edge.append( "totalBytesRecd" , totalBytesRecd[ *src ][ *tgt ] );
 			    */	
-			    srcBuilder.append( *tgt , tgtBuilder.obj() );
+			    BSONObjBuilder idBuilder;
+			    idBuilder.append( "source" , *src );
+			    idBuilder.append( "target" , *tgt );			    
+			    conn->update( statsLocation , idBuilder.obj() , edge.obj() , true); 
 			}
 		    }
-		    statsBuilder.append( *src , srcBuilder.obj() );
 		}
-		conn->insert( statsLocation , statsBuilder.obj() ); 
 	    }
 	    connPtr->done(); 
-
 	}
 	catch( DBException& e ){
 	    cout << "[PingMonitor::calculateStats()] : " << e.toString() << endl;

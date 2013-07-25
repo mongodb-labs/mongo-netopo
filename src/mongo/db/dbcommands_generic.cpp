@@ -194,7 +194,7 @@ namespace mongo {
 		//note the number of socket exceptions of each type between this instance and this target 
 		SocketException::Type i = SocketException::CLOSED;
 		SocketException::Type end = SocketException::CONNECT_ERROR;
-		while( i < end ){
+		while( i <= end ){
 		    long long numExceptions = SocketException::numExceptions( i , target );
 		    if( numExceptions > 0 ) 
 			 targetInfo.append( SocketException::_getStringType(i) , numExceptions );
