@@ -98,7 +98,7 @@ function createShardedCluster() {
     // ShardingTest = function( testName, numShards, verboseLevel, numMongos, otherParams )
     // testName is the cluster name	
 //    s = new ShardingTest( "shard1" , 3 , 0 , 3 );
-//    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:3 , rs:{nodes : 3} , shards:6 , config:3 } );
+//    s = new ShardingTest( {name:"shard1" , verbose:1 , mongos:2 , rs:{nodes : 3} , shards:4 , config:3 } );
     s = new ShardingTest( {name:"shard1" , rs:{nodes:3}} );    
    return s;			
 

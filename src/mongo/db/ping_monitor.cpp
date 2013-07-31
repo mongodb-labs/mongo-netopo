@@ -179,9 +179,15 @@ namespace mongo {
 
     void PingMonitor::doPingForTarget(){
 
-	if( on == false )
-	    return;
 
+	if( on == false )
+	{
+	    cout << "on is false";
+	    return;
+	}
+	else
+	    cout << "on is true";
+  
 	if( networkType == replicaSet )
 	    doPingForReplset();
 	else if( networkType == shardedCluster )
@@ -471,6 +477,18 @@ namespace mongo {
 	// only shard mongod instances collect the following
 	if ( primary.compare(type.getStringField("role")) == 0 || secondary.compare(type.getStringField("role")) == 0 )
 	    collectClientInfoHelper( hp , newHost , "admin" , "isMaster" );
+
+
+    }
+
+    void PingMonitor::putGenericInfo( BSONObjBuilder& newHost , const string& hostName , const string& machine , const string& process , const string& role , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+	newHost.append( "ipaddr" , "testing");
+	newHost.append( "hostName" , hostName );
+	newHost.append( "machine" , machine );
+	newHost.append( "key" , hostName + "_" + machine + "_" + process );
+	BSONObj type = BSON( "process" << process << "role" << role );;	
+	newHost.append( "type" , type );
+	collectClientInfo( hostName , newHost , type , errors , warnings );
     }
 
     int PingMonitor::getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
@@ -480,10 +498,12 @@ namespace mongo {
 	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
 	    ScopedDbConnection& conn = *connPtr;
 	    auto_ptr<DBClientCursor> cursor( conn->query( "config.shards" , BSONObj() ) ) ;
+
 	    while( cursor->more() ){
 		BSONObj p = cursor->nextSafe();
 		string hostField = p.getStringField("host");
 		string::size_type startPos = hostField.find("/");
+
 		if( startPos != string::npos ){
 		    string shardName = hostField.substr(0, startPos); 
 		    string memberHosts = hostField.substr(startPos + 1);
@@ -496,17 +516,11 @@ namespace mongo {
 			int id = index;
 			index++;
 			BSONObjBuilder newHost;
-			newHost.append( "hostName" , currToken );
-			newHost.append( "machine" , "" );
-			newHost.append( "shardName" , shardName );
-			newHost.append( "key" , currToken + "_" + "" + "_" + "mongod" );
-			BSONObj type;	
 			if( count == 0 )
-			    type = BSON( "process" << "mongod" << "role" << "primary" );
+			    putGenericInfo( newHost , currToken , "" , "mongod" , "primary" , errors , warnings );
 			else
-			    type = BSON( "process" << "mongod" << "role" << "secondary" );
-			newHost.append( "type" , type );
-			collectClientInfo( currToken , newHost , type , errors , warnings );
+			    putGenericInfo( newHost , currToken , "" , "mongod" , "secondary" , errors , warnings );
+			newHost.append( "shardName" , shardName );
 			char idString[100];
 			sprintf(idString , "%d" , id);
 			nodes.append( idString , newHost.obj() );
@@ -516,13 +530,8 @@ namespace mongo {
 		    int id = index;
 		    index++;
 		    BSONObjBuilder newHost;
-		    newHost.append( "hostName" , memberHosts );
-		    newHost.append( "machine" , "" );
+		    putGenericInfo( newHost , memberHosts , "" , "mongod" , "secondary" , errors , warnings );
 		    newHost.append( "shardName" , shardName );
-		    newHost.append( "key" , memberHosts + "_" + "" + "_" + "mongod" );
-		    BSONObj type = BSON( "process" << "mongod" << "role" << "secondary" );
-		    newHost.append( "type" , type );
-		    collectClientInfo( HostAndPort(currToken) , newHost , type , errors , warnings );
 		    char idString[100];
 		    sprintf(idString , "%d" , id);
 		    nodes.append( idString , newHost.obj() );
@@ -531,11 +540,7 @@ namespace mongo {
 		    int id = index;
 		    index++;
 		    BSONObjBuilder newHost;
-		    newHost.append( "hostName" , p.getStringField("host") );
-		    newHost.append( "machine" , "" );
-		    newHost.append( "key" , hostField + "_" + "" + "_" + "mongod" );
-		    BSONObj type = BSON( "process" << "mongod" << "role" << "primary" );
-		    collectClientInfo( HostAndPort(p.getStringField("host")) , newHost , type , errors , warnings );
+		    putGenericInfo( newHost , p.getStringField("host") , "" , "mongod" , "primary" , errors , warnings );
 		    char idString[100];
 		    sprintf(idString , "%d" , id);
 		    nodes.append( idString , newHost.obj() );
@@ -562,12 +567,7 @@ namespace mongo {
 		int id = index;
 		index++;
 		BSONObjBuilder newHost;
-		newHost.append( "hostName" , hostField );
-		newHost.append( "machine" , "" );
-		newHost.append( "key" , hostField + "_" + "" + "_" + "mongos" );
-		BSONObj type = BSON( "process" << "mongos" << "role" << "mongos" );
-		newHost.append( "type" , type );
-		collectClientInfo( hostField , newHost , type , errors , warnings );
+		putGenericInfo( newHost, hostField, "", "mongos", "mongos", errors , warnings);
 		char idString[100];
 		sprintf(idString , "%d" , id);
 		nodes.append( idString , newHost.obj() );
@@ -589,7 +589,6 @@ namespace mongo {
 	    conn->runCommand("admin" , BSON("getCmdLineOpts"<<1) , cmdReturned ); 
 
 	    string hosts = cmdReturned["parsed"]["configdb"].valuestrsafe();
-	    cout << "config host : " << hosts << endl;
 
 	    int count = 0;
 	    size_t currPos = 0;
@@ -599,16 +598,7 @@ namespace mongo {
 		int id = index;
 		index++;
 		BSONObjBuilder newHost;
-		newHost.append( "hostName" , currToken );
-		newHost.append( "machine" , "" );
-		newHost.append( "key" , currToken + "_" + "" + "_" + "mongod" );
-		BSONObj type;	
-		if( count == 0 )
-		    type = BSON( "process" << "mongod" << "role" << "config" );
-		else
-		    type = BSON( "process" << "mongod" << "role" << "config" );
-		newHost.append( "type" , type );
-		collectClientInfo( currToken , newHost , type , errors , warnings );
+		putGenericInfo( newHost , currToken , "" , "mongod" , "config" , errors, warnings);
 		char idString[100];
 		sprintf(idString , "%d" , id);
 		nodes.append( idString , newHost.obj() );
@@ -619,12 +609,7 @@ namespace mongo {
 	    int id = index;
 	    index++;
 	    BSONObjBuilder newHost;
-	    newHost.append( "hostName" , hosts );
-	    newHost.append( "machine" , "" );
-	    newHost.append( "key" , hosts + "_" + "" + "_" + "mongod" );
-	    BSONObj type = BSON( "process" << "mongod" << "role" << "config" );
-	    newHost.append( "type" , type );
-	    collectClientInfo( HostAndPort(hosts) , newHost , type , errors , warnings );
+	    putGenericInfo( newHost, hosts, "", "mongod" , "config" , errors, warnings);
 	    char idString[100];
 	    sprintf(idString , "%d" , id);
 	    nodes.append( idString , newHost.obj() );
@@ -954,7 +939,7 @@ namespace mongo {
 
     bool hasNotice( vector<BSONElement>& v , string notice ){
 	for( vector<BSONElement>::iterator i = v.begin(); i!=v.end(); ++i){
-	    if( notice.compare(i->String()) != 0 )
+	    if( notice.compare(i->String()) == 0 )
 		return true;
 	} 
 	return false;
@@ -1040,8 +1025,6 @@ namespace mongo {
 				continue;
 			    vector<BSONElement> currNodeWarnings = currNode.Array(); 
 			    vector<BSONElement> prevNodeWarnings = prevWarnings[ currNode.fieldName() ].Array();
-			  //  cout << "curr warnings : " << currNodeWarnings << endl;
-			  //  cout << "prev warnings : " << prevNodeWarnings << endl;
 			    for( vector<BSONElement>::iterator i = currNodeWarnings.begin(); i!=currNodeWarnings.end(); ++i){
 				if( hasNotice( prevNodeWarnings , i->String() ) == false)
 				    newWarnings.append( i->String() );	

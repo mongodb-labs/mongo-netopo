@@ -139,6 +139,8 @@
 	void addError(const string& key , const string& err , map<string, vector<string> >& errors);
 	void addWarning(const string& key , const string& warning , map<string, vector<string> >& warnings);
 
+
+	void putGenericInfo( BSONObjBuilder& newHost , const string& hostName , const string& machine , const string& process , const string& role , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 	int getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 	int getMongosServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 	int getConfigServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );

@@ -112,8 +112,9 @@ namespace mongo {
 			bool on = true;
 			int interval = 15;
 			string collectionPrefix = "";	
-			if( bo.getField("on").eoo() == false )
+			if( bo.getField("on").eoo() == false ){
 			    on = bo.getBoolField("on");
+			}
 			if( bo["interval"].trueValue() && bo["interval"].isNumber() )
 			    interval = bo["interval"].numberInt();
 			if( bo["collectionPrefix"].trueValue() )
