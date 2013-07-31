@@ -81,7 +81,7 @@ namespace mongo {
 		    try{
 			hp = HostAndPort( bo["server"].valuestrsafe() );
 		    }
-		    catch( DBException& e ){
+		    catch( std::exception& e ){
 			result.append( bo["server"].valuestrsafe() , "Not a valid host:port pair." );
 			continue;
 		    }

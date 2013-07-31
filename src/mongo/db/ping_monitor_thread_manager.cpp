@@ -210,11 +210,11 @@ namespace mongo {
 	    }
 	    else
 		toReturn.append( "isNotMaster" , false );
-
+	    connPtr->done();
 	} catch( DBException& e ){
 	    toReturn.append( "errmsg" , e.toString() );
 	}
-	connPtr->done();
+
 	return toReturn.obj();
     }
 

@@ -684,6 +684,17 @@ namespace mongo {
 	}
     }
 
+
+
+
+
+
+
+
+
+
+
+
     void PingMonitor::buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap ){
 	for(BSONObj::iterator i = nodes.begin(); i.more(); ){
 	    BSONElement nodeElem = i.next();
@@ -1062,51 +1073,45 @@ namespace mongo {
 			}
 
 
-
-
-/*
 			// check for removed errors
-			for( BSONObj::iterator i = prevErrors.begin(); i.more(); ){
-			    BSONElement prevNode = i.next();
-			    if( currErrors[ prevNode.fieldName() ].trueValue() == false )
-				continue;
-			    vector<BSONElement> prevNodeErrors = prevNode.Array(); 
-			    vector<BSONElement> currNodeErrors = currErrors[ prevNode.fieldName() ].Array();
-			    for( vector<BSONElement>::iterator i = prevNodeErrors.begin(); i!=prevNodeErrors.end(); ++i){
-				if( hasNotice( currNodeErrors , i->String() ) == false)
-				    removedErrors.append( i->String() );	
+			for( BSONObj::iterator i = currErrors.begin(); i.more(); ){
+			    BSONElement currHost = i.next();
+			    vector<BSONElement> currHostErrors = currHost.Array(); 
+			    // if currious snapshot has no errors for this host, note all removed errors 
+			    if( currErrors[ currHost.fieldName() ].trueValue() == false )
+				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+				    removedErrors.append( *i );	
 			    }
-			}
-
-			// check for new warnings
-			for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
-			    BSONElement currNode = i.next();
-			    if( prevWarnings[ currNode.fieldName() ].trueValue() == false )
-				continue;
-			    vector<BSONElement> currNodeWarnings = currNode.Array(); 
-			    vector<BSONElement> prevNodeWarnings = prevWarnings[ currNode.fieldName() ].Array();
-			    for( vector<BSONElement>::iterator i = currNodeWarnings.begin(); i!=currNodeWarnings.end(); ++i){
-				if( hasNotice( prevNodeWarnings , i->String() ) == false){
-				    newWarnings.append( i->String() );	
-				}
-				else{
+			    // currious snapshot has errors for this host, but might be different from current ones
+			    else{
+				vector<BSONElement> currHostErrors = currErrors[ currHost.fieldName() ].Array();
+				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+				    if( find( currHostErrors.begin(), currHostErrors.end(), *i ) == currHostErrors.end() )
+					removedErrors.append( *i );	
 				}
 			    }
 			}
 
 			// check for removed warnings
-			for( BSONObj::iterator i = prevWarnings.begin(); i.more(); ){
-			    BSONElement prevNode = i.next();
-			    if( currWarnings[ prevNode.fieldName() ].trueValue() == false )
-				continue;
-			    vector<BSONElement> prevNodeWarnings = prevNode.Array(); 
-			    vector<BSONElement> currNodeWarnings = currWarnings[ prevNode.fieldName() ].Array();
-			    for( vector<BSONElement>::iterator i = prevNodeWarnings.begin(); i!=prevNodeWarnings.end(); ++i){
-				if( hasNotice( currNodeWarnings , i->String() ) == false)
-				    removedWarnings.append( i->String() );	
+			for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
+			    BSONElement currHost = i.next();
+			    vector<BSONElement> currHostWarnings = currHost.Array(); 
+			    // if currious snapshot has no warnings for this host, note all removed warnings 
+			    if( currWarnings[ currHost.fieldName() ].trueValue() == false )
+				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+				    removedWarnings.append( *i );	
+			    }
+			    // currious snapshot has warnings for this host, but might be different from current ones
+			    else{
+				vector<BSONElement> currHostWarnings = currWarnings[ currHost.fieldName() ].Array();
+				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+				    if( find( currHostWarnings.begin(), currHostWarnings.end(), *i ) == currHostWarnings.end() )
+					removedWarnings.append( *i );	
+				}
 			    }
 			}
-*/
+
+
 
 			// save all deltas to the database
 
@@ -1132,10 +1137,11 @@ namespace mongo {
 		    count++;
 		}
 	    }
+	   connPtr->done();
 	} catch( DBException& e ){
 	    cout << "[PingMonitor::calculateDeltas()] : " << e.toString() << endl;
 	}
-	connPtr->done();
+
     }
 
     void PingMonitor::shutdown(){
