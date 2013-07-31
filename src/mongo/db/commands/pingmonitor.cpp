@@ -89,7 +89,7 @@ namespace mongo {
 		    if( bo["remove"].trueValue() ){
 			if( PingMonitorThreadManager::hasTarget( hp ) ){
 			    PingMonitorThreadManager::removeTarget( hp );
-			    result.append( bo["server"].valuestrsafe() , "Fully deleted from system" );
+			    result.append( bo["server"].valuestrsafe() , "Removed from targets" );
 			}
 			else
 			    result.append( bo["server"].valuestrsafe() , "Server does not exist amongst monitoring targets" );

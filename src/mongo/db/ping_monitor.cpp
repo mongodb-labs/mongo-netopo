@@ -179,14 +179,9 @@ namespace mongo {
 
     void PingMonitor::doPingForTarget(){
 
-
 	if( on == false )
-	{
-	    cout << "on is false";
 	    return;
-	}
 	else
-	    cout << "on is true";
   
 	if( networkType == replicaSet )
 	    doPingForReplset();
@@ -292,16 +287,10 @@ namespace mongo {
 		BSONElement be = *i;
 		string curr = be.valuestrsafe();
 		BSONObjBuilder newHost;
-		newHost.append( "hostName" , curr );
-		newHost.append( "machine" , "" );
-		newHost.append( "key" , curr + "_" + "" + "_" + "mongod" );
-		BSONObj type;
 		if( curr.compare(cmdReturned["primary"].valuestrsafe()) == 0 )
-		    type = BSON( "process" << "mongod" << "role" << "primary" );
+		    putGenericInfo( newHost , curr , "" , "mongod" , "primary" , errorsBuilder , warningsBuilder );
 		else
-		    type = BSON( "process" << "mongod" << "role" << "secondary" );
-		newHost.append( "type" , type );
-		collectClientInfo( curr , newHost , type , errorsBuilder , warningsBuilder );
+		    putGenericInfo( newHost , curr , "" , "mongod" , "secondary" , errorsBuilder , warningsBuilder );
 		char idString[100];
 		sprintf(idString , "%d" , id);
 		nodesBuilder.append( idString , newHost.obj() );
@@ -482,13 +471,30 @@ namespace mongo {
     }
 
     void PingMonitor::putGenericInfo( BSONObjBuilder& newHost , const string& hostName , const string& machine , const string& process , const string& role , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+
+	// append all generic information found in the config server about this node
 	newHost.append( "ipaddr" , "testing");
 	newHost.append( "hostName" , hostName );
 	newHost.append( "machine" , machine );
 	newHost.append( "key" , hostName + "_" + machine + "_" + process );
 	BSONObj type = BSON( "process" << process << "role" << role );;	
 	newHost.append( "type" , type );
-	collectClientInfo( hostName , newHost , type , errors , warnings );
+
+	// check if we can make a client connection to this host
+	// and if so, ask it for more information about itself
+	// and mark it as available to us
+	try{ 
+	    ScopedDbConnection conn( hostName  , socketTimeout ); 
+	    newHost.append("available", true );
+	    collectClientInfo( hostName , newHost , type , errors , warnings );
+	    conn.done();
+	}
+	catch( DBException& e ){
+	    addError(  hostName + "_" + machine + "_" + process, e.toString() , errors );
+	    newHost.append("available", false );
+	}
+
+
     }
 
     int PingMonitor::getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
@@ -623,33 +629,58 @@ namespace mongo {
     }
 
     void PingMonitor::buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
-	for (BSONObj::iterator srcId = nodes.begin(); srcId.more(); ){
-	    BSONElement srcElem = srcId.next();
-	    string srcHostName = srcElem.embeddedObject().getStringField("hostName");
-	    BSONObjBuilder srcEdges;
-	    for( BSONObj::iterator tgtId = nodes.begin(); tgtId.more(); ){
-		BSONElement tgtElem = tgtId.next();
-		string tgtHostName = tgtElem.embeddedObject().getStringField("hostName"); 
-		BSONObjBuilder newEdge;
-		try{ 
-		    ScopedDbConnection conn( srcHostName , socketTimeout ); 
-		    // create deep ping command in the form { ping : 1 , hosts : [ ] }
-		    BSONObjBuilder pingCmdBuilder;
-		    pingCmdBuilder.append( "ping" , 1 );
-		    BSONObj hostObj = BSON( "0" << tgtHostName );
-		    pingCmdBuilder.appendArray( "hosts" , hostObj );
-		    BSONObj pingCmd = pingCmdBuilder.obj();
-		    BSONObj cmdReturned;
-		    // run deep ping
-		    conn->runCommand( "admin" , pingCmd , cmdReturned );	
-		    srcEdges.append( tgtElem.fieldName() , cmdReturned.getObjectField( tgtHostName ) );
-		    conn.done();
+
+	// create a map of <host:port> strings to < availability , id >
+	map<string , pair<bool, string > > availableNodes;
+	for( BSONObj::iterator n = nodes.begin(); n.more(); ){
+	    BSONElement nElem = n.next();
+	    BSONObj nObj = nElem.embeddedObject();
+	    pair<bool, string > p ( nObj.getBoolField("available") , nElem.fieldName() );
+	    availableNodes[ nObj.getStringField("hostName") ] = p;	    
+	}
+
+	for (map<string, pair<bool,string> >::iterator src = availableNodes.begin(); src!=availableNodes.end(); ++src ){
+	    // only continue if we have been able to make a client connection to this instance (src)
+	    if( src->second.first == true){
+		string srcHostName = src->first;
+		BSONObjBuilder srcEdges;
+		for( map<string, pair<bool,string> >::iterator tgt = availableNodes.begin(); tgt!=availableNodes.end(); ++tgt){
+		    // only continue if we have been able to make a client connection to this instance (tgt)
+		    if( tgt->second.first == true ){	
+			string tgtHostName = tgt->first;
+			BSONObjBuilder newEdge;
+			try{ 
+			    ScopedDbConnection conn( srcHostName , socketTimeout ); 
+			    // create deep ping command in the form { ping : 1 , hosts : [ ] }
+			    BSONObjBuilder pingCmdBuilder;
+			    pingCmdBuilder.append( "ping" , 1 );
+			    BSONObj hostObj = BSON( "0" << tgtHostName );
+			    pingCmdBuilder.appendArray( "hosts" , hostObj );
+			    BSONObj pingCmd = pingCmdBuilder.obj();
+			    BSONObj cmdReturned;
+			    // run deep ping
+			    conn->runCommand( "admin" , pingCmd , cmdReturned );	
+
+			    // if the source was unable to ping the target, mark the target as unavailable
+			    if( cmdReturned["exceptionInfo"].trueValue() ){
+				addError( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , cmdReturned["exceptionInfo"].valuestrsafe() , errors );
+				tgt->second.first = false;
+			    }
+
+			    // append the target node's id with the result of the ping command to it
+			    srcEdges.append( tgt->second.second , cmdReturned.getObjectField( tgtHostName ) );
+			    conn.done();
+			}
+			catch( DBException& e ){
+			    src->second.first = false;
+			    cout << "[PingMonitor::buildGraph()] : " << e.toString() << endl;
+			    addError( nodes.getObjectField( src->second.second )["key"].valuestrsafe() , e.toString() , errors );
+			}
+		    }
 		}
-		catch( DBException& e ){
-		    cout << "[PingMonitor::buildGraph()] : " << e.toString() << endl;
-		}
+		// append the source node's id with all of its outgoing edges
+		edges.append( src->second.second , srcEdges.obj() );
 	    }
-	    edges.append( srcElem.fieldName() , srcEdges.obj() );
 	}
     }
 
@@ -961,16 +992,16 @@ namespace mongo {
 	    }
 	    else{
 		int count = 0;
-		BSONObj prev;
-		BSONObj prevErrors;
-		BSONObj prevWarnings;
-		BSONObj prevIdMap;
+		BSONObj prev = BSONObj();
+		BSONObj prevErrors = BSONObj();
+		BSONObj prevWarnings = BSONObj();
+		BSONObj prevIdMap = BSONObj();
 		while( cursor->more() ){
 		    BSONObj curr = cursor->nextSafe();
 		    BSONObj currErrors = curr.getObjectField("errors");
 		    BSONObj currWarnings = curr.getObjectField("warnings");
 		    BSONObj currIdMap = curr.getObjectField("idMap");
-		    if( count > 0 ){
+
 			BSONArrayBuilder newErrors;
 			BSONArrayBuilder newWarnings;
 			BSONArrayBuilder newNodes;
@@ -994,17 +1025,46 @@ namespace mongo {
 
 			// check for new errors
 			for( BSONObj::iterator i = currErrors.begin(); i.more(); ){
-			    BSONElement currNode = i.next();
-			    if( prevErrors[ currNode.fieldName() ].trueValue() == false )
-				continue;
-			    vector<BSONElement> currNodeErrors = currNode.Array(); 
-			    vector<BSONElement> prevNodeErrors = prevErrors[ currNode.fieldName() ].Array();
-			    for( vector<BSONElement>::iterator i = currNodeErrors.begin(); i!=currNodeErrors.end(); ++i){
-				if( hasNotice( prevNodeErrors , i->String() ) == false)
-				    newErrors.append( i->String() );	
+			    BSONElement currHost = i.next();
+			    vector<BSONElement> currHostErrors = currHost.Array(); 
+			    // if previous snapshot has no errors for this host, note all new errors 
+			    if( prevErrors[ currHost.fieldName() ].trueValue() == false )
+				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+				    newErrors.append( *i );	
+			    }
+			    // previous snapshot has errors for this host, but might be different from current ones
+			    else{
+				vector<BSONElement> prevHostErrors = prevErrors[ currHost.fieldName() ].Array();
+				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+				    if( find( prevHostErrors.begin(), prevHostErrors.end(), *i ) == prevHostErrors.end() )
+					newErrors.append( *i );	
+				}
 			    }
 			}
 
+			// check for new warnings
+			for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
+			    BSONElement currHost = i.next();
+			    vector<BSONElement> currHostWarnings = currHost.Array(); 
+			    // if previous snapshot has no warnings for this host, note all new warnings 
+			    if( prevWarnings[ currHost.fieldName() ].trueValue() == false )
+				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+				    newWarnings.append( *i );	
+			    }
+			    // previous snapshot has warnings for this host, but might be different from current ones
+			    else{
+				vector<BSONElement> prevHostWarnings = prevWarnings[ currHost.fieldName() ].Array();
+				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+				    if( find( prevHostWarnings.begin(), prevHostWarnings.end(), *i ) == prevHostWarnings.end() )
+					newWarnings.append( *i );	
+				}
+			    }
+			}
+
+
+
+
+/*
 			// check for removed errors
 			for( BSONObj::iterator i = prevErrors.begin(); i.more(); ){
 			    BSONElement prevNode = i.next();
@@ -1026,8 +1086,11 @@ namespace mongo {
 			    vector<BSONElement> currNodeWarnings = currNode.Array(); 
 			    vector<BSONElement> prevNodeWarnings = prevWarnings[ currNode.fieldName() ].Array();
 			    for( vector<BSONElement>::iterator i = currNodeWarnings.begin(); i!=currNodeWarnings.end(); ++i){
-				if( hasNotice( prevNodeWarnings , i->String() ) == false)
+				if( hasNotice( prevNodeWarnings , i->String() ) == false){
 				    newWarnings.append( i->String() );	
+				}
+				else{
+				}
 			    }
 			}
 
@@ -1043,7 +1106,7 @@ namespace mongo {
 				    removedWarnings.append( i->String() );	
 			    }
 			}
-
+*/
 
 			// save all deltas to the database
 
@@ -1062,7 +1125,6 @@ namespace mongo {
 			deltasBuilder.append( "removedWarnings" , removedWarnings.arr() ); 
 			conn->update( deltasLocation , idBuilder.obj() , deltasBuilder.obj() , true); 
 
-		    }
 		    prev = curr;
 		    prevErrors = currErrors;
 		    prevWarnings = currWarnings;
