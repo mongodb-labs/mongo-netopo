@@ -1084,133 +1084,134 @@ namespace mongo {
 		    BSONObj currWarnings = curr.getObjectField("warnings");
 		    BSONObj currIdMap = curr.getObjectField("idMap");
 		    BSONObj currNodes = curr.getObjectField("nodes");
+		    
+//		    if( count > 0 ){
+			BSONArrayBuilder newErrors;
+			BSONArrayBuilder newWarnings;
+			BSONArrayBuilder newNodes;
+			BSONArrayBuilder removedErrors;
+			BSONArrayBuilder removedWarnings;
+			BSONArrayBuilder removedNodes;
+			BSONArrayBuilder flags;
 
-		    BSONArrayBuilder newErrors;
-		    BSONArrayBuilder newWarnings;
-		    BSONArrayBuilder newNodes;
-		    BSONArrayBuilder removedErrors;
-		    BSONArrayBuilder removedWarnings;
-		    BSONArrayBuilder removedNodes;
-		    BSONArrayBuilder flags;
-
-		    // check for new nodes
-		    // and check for role change
-		    for( BSONObj::iterator i = currIdMap.begin(); i.more(); ){
-			string currKey = i.next().fieldName();
-			if( prevIdMap[ currKey ].eoo() == true )
-			    newNodes.append( currKey );
-			else{
-			    string prevRole = prevNodes.getObjectField( prevIdMap[ currKey ].valuestrsafe() ).getObjectField("type")["role"];	
-			    string currRole = currNodes.getObjectField( currIdMap[ currKey ].valuestrsafe() ).getObjectField("type")["role"];	
-			    if( currRole.compare( prevRole ) != 0 ){
-				string newFlag = "Host with key " + currKey + " changed roles from " + prevRole + " to " + currRole; 
-				flags.append( newFlag );	
+			// check for new nodes
+			// and check for role change
+			for( BSONObj::iterator i = currIdMap.begin(); i.more(); ){
+			    string currKey = i.next().fieldName();
+			    if( prevIdMap[ currKey ].eoo() == true )
+				newNodes.append( currKey );
+			    else{
+				string prevRole = prevNodes.getObjectField( prevIdMap[ currKey ].valuestrsafe() ).getObjectField("type")["role"];	
+				string currRole = currNodes.getObjectField( currIdMap[ currKey ].valuestrsafe() ).getObjectField("type")["role"];	
+				if( currRole.compare( prevRole ) != 0 ){
+				    string newFlag = "Host with key " + currKey + " changed roles from " + prevRole + " to " + currRole; 
+				    flags.append( newFlag );	
+				}
 			    }
 			}
-		    }
 
-		    // check for removed nodes
-		    for( BSONObj::iterator i = prevIdMap.begin(); i.more(); ){
-			string prevKey = i.next().fieldName();
-			if( currIdMap[ prevKey ].eoo() == true )
-			    removedNodes.append( prevKey );
-		    }
-
-		    // check for new errors
-		    for( BSONObj::iterator i = currErrors.begin(); i.more(); ){
-			BSONElement currHost = i.next();
-			vector<BSONElement> currHostErrors = currHost.Array(); 
-			// if previous snapshot has no errors for this host, note all new errors 
-			if( prevErrors[ currHost.fieldName() ].trueValue() == false )
-			    for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
-				newErrors.append( *i );	
+			// check for removed nodes
+			for( BSONObj::iterator i = prevIdMap.begin(); i.more(); ){
+			    string prevKey = i.next().fieldName();
+			    if( currIdMap[ prevKey ].eoo() == true )
+				removedNodes.append( prevKey );
 			}
-			// previous snapshot has errors for this host, but might be different from current ones
-			else{
-			    vector<BSONElement> prevHostErrors = prevErrors[ currHost.fieldName() ].Array();
-			    for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
-				if( find( prevHostErrors.begin(), prevHostErrors.end(), *i ) == prevHostErrors.end() )
+
+			// check for new errors
+			for( BSONObj::iterator i = currErrors.begin(); i.more(); ){
+			    BSONElement currHost = i.next();
+			    vector<BSONElement> currHostErrors = currHost.Array(); 
+			    // if previous snapshot has no errors for this host, note all new errors 
+			    if( prevErrors[ currHost.fieldName() ].trueValue() == false )
+				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
 				    newErrors.append( *i );	
 			    }
+			    // previous snapshot has errors for this host, but might be different from current ones
+			    else{
+				vector<BSONElement> prevHostErrors = prevErrors[ currHost.fieldName() ].Array();
+				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+				    if( find( prevHostErrors.begin(), prevHostErrors.end(), *i ) == prevHostErrors.end() )
+					newErrors.append( *i );	
+				}
+			    }
 			}
-		    }
 
-		    // check for new warnings
-		    for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
-			BSONElement currHost = i.next();
-			vector<BSONElement> currHostWarnings = currHost.Array(); 
-			// if previous snapshot has no warnings for this host, note all new warnings 
-			if( prevWarnings[ currHost.fieldName() ].trueValue() == false )
-			    for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
-				newWarnings.append( *i );	
-			}
-			// previous snapshot has warnings for this host, but might be different from current ones
-			else{
-			    vector<BSONElement> prevHostWarnings = prevWarnings[ currHost.fieldName() ].Array();
-			    for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
-				if( find( prevHostWarnings.begin(), prevHostWarnings.end(), *i ) == prevHostWarnings.end() )
+			// check for new warnings
+			for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
+			    BSONElement currHost = i.next();
+			    vector<BSONElement> currHostWarnings = currHost.Array(); 
+			    // if previous snapshot has no warnings for this host, note all new warnings 
+			    if( prevWarnings[ currHost.fieldName() ].trueValue() == false )
+				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
 				    newWarnings.append( *i );	
 			    }
+			    // previous snapshot has warnings for this host, but might be different from current ones
+			    else{
+				vector<BSONElement> prevHostWarnings = prevWarnings[ currHost.fieldName() ].Array();
+				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+				    if( find( prevHostWarnings.begin(), prevHostWarnings.end(), *i ) == prevHostWarnings.end() )
+					newWarnings.append( *i );	
+				}
+			    }
 			}
-		    }
 
-		    // check for removed errors
-		    for( BSONObj::iterator i = prevErrors.begin(); i.more(); ){
-			BSONElement prevHost = i.next();
-			vector<BSONElement> prevHostErrors = prevHost.Array(); 
-			// if current snapshot has no errors for this host, note all removed errors 
-			if( currErrors[ prevHost.fieldName() ].trueValue() == false )
-			    for( vector<BSONElement>::iterator i = prevHostErrors.begin(); i!=prevHostErrors.end(); ++i){
-				removedErrors.append( *i );	
-			}
-			// current snapshot has errors for this host, but might be different from prevent ones
-			else{
-			    vector<BSONElement> currHostErrors = currErrors[ prevHost.fieldName() ].Array();
-			    for( vector<BSONElement>::iterator i = prevHostErrors.begin(); i!=prevHostErrors.end(); ++i){
-				if( find( currHostErrors.begin(), currHostErrors.end(), *i ) == currHostErrors.end() )
+			// check for removed errors
+			for( BSONObj::iterator i = prevErrors.begin(); i.more(); ){
+			    BSONElement prevHost = i.next();
+			    vector<BSONElement> prevHostErrors = prevHost.Array(); 
+			    // if current snapshot has no errors for this host, note all removed errors 
+			    if( currErrors[ prevHost.fieldName() ].trueValue() == false )
+				for( vector<BSONElement>::iterator i = prevHostErrors.begin(); i!=prevHostErrors.end(); ++i){
 				    removedErrors.append( *i );	
 			    }
-			}
-		    }
-
-		    // check for removed warnings
-		    for( BSONObj::iterator i = prevWarnings.begin(); i.more(); ){
-			BSONElement prevHost = i.next();
-			vector<BSONElement> prevHostWarnings = prevHost.Array(); 
-			// if current snapshot has no warnings for this host, note all removed warnings 
-			if( currWarnings[ prevHost.fieldName() ].trueValue() == false )
-			    for( vector<BSONElement>::iterator i = prevHostWarnings.begin(); i!=prevHostWarnings.end(); ++i){
-				removedWarnings.append( *i );	
-			}
-			// current snapshot has warnings for this host, but might be different from prevent ones
-			else{
-			    vector<BSONElement> currHostWarnings = currWarnings[ prevHost.fieldName() ].Array();
-			    for( vector<BSONElement>::iterator i = prevHostWarnings.begin(); i!=prevHostWarnings.end(); ++i){
-				if( find( currHostWarnings.begin(), currHostWarnings.end(), *i ) == currHostWarnings.end() )
-				    removedWarnings.append( *i );	
+			    // current snapshot has errors for this host, but might be different from prevent ones
+			    else{
+				vector<BSONElement> currHostErrors = currErrors[ prevHost.fieldName() ].Array();
+				for( vector<BSONElement>::iterator i = prevHostErrors.begin(); i!=prevHostErrors.end(); ++i){
+				    if( find( currHostErrors.begin(), currHostErrors.end(), *i ) == currHostErrors.end() )
+					removedErrors.append( *i );	
+				}
 			    }
 			}
-		    }
+
+			// check for removed warnings
+			for( BSONObj::iterator i = prevWarnings.begin(); i.more(); ){
+			    BSONElement prevHost = i.next();
+			    vector<BSONElement> prevHostWarnings = prevHost.Array(); 
+			    // if current snapshot has no warnings for this host, note all removed warnings 
+			    if( currWarnings[ prevHost.fieldName() ].trueValue() == false )
+				for( vector<BSONElement>::iterator i = prevHostWarnings.begin(); i!=prevHostWarnings.end(); ++i){
+				    removedWarnings.append( *i );	
+			    }
+			    // current snapshot has warnings for this host, but might be different from prevent ones
+			    else{
+				vector<BSONElement> currHostWarnings = currWarnings[ prevHost.fieldName() ].Array();
+				for( vector<BSONElement>::iterator i = prevHostWarnings.begin(); i!=prevHostWarnings.end(); ++i){
+				    if( find( currHostWarnings.begin(), currHostWarnings.end(), *i ) == currHostWarnings.end() )
+					removedWarnings.append( *i );	
+				}
+			    }
+			}
 
 
 
-		    // save all deltas to the database
+			// save all deltas to the database
 
-		    BSONObjBuilder idBuilder;
-		    idBuilder.append( "currTime" , curr["currTime"].date() );
-		    idBuilder.append( "prevTime" , prev["currTime"].date() );
+			BSONObjBuilder idBuilder;
+			idBuilder.append( "currTime" , curr["currTime"].date() );
+			idBuilder.append( "prevTime" , prev["currTime"].date() );
 
-		    BSONObjBuilder deltasBuilder;
-		    deltasBuilder.append( "currTime" , curr["currTime"].date() );
-		    deltasBuilder.append( "prevTime" , prev["currTime"].date() );
-		    deltasBuilder.append( "newNodes" , newNodes.arr() );
-		    deltasBuilder.append( "newErrors" , newErrors.arr() );
-		    deltasBuilder.append( "newWarnings" , newWarnings.arr() ); 
-		    deltasBuilder.append( "removedNodes" , removedNodes.arr() );
-		    deltasBuilder.append( "removedErrors" , removedErrors.arr() );
-		    deltasBuilder.append( "removedWarnings" , removedWarnings.arr() ); 
-		    conn->update( deltasLocation , idBuilder.obj() , deltasBuilder.obj() , true); 
-
+			BSONObjBuilder deltasBuilder;
+			deltasBuilder.append( "currTime" , curr["currTime"].date() );
+			deltasBuilder.append( "prevTime" , prev["currTime"].date() );
+			deltasBuilder.append( "newNodes" , newNodes.arr() );
+			deltasBuilder.append( "newErrors" , newErrors.arr() );
+			deltasBuilder.append( "newWarnings" , newWarnings.arr() ); 
+			deltasBuilder.append( "removedNodes" , removedNodes.arr() );
+			deltasBuilder.append( "removedErrors" , removedErrors.arr() );
+			deltasBuilder.append( "removedWarnings" , removedWarnings.arr() ); 
+			conn->update( deltasLocation , idBuilder.obj() , deltasBuilder.obj() , true); 
+//		    }
 		    prev = curr;
 		    prevErrors = currErrors;
 		    prevWarnings = currWarnings;
