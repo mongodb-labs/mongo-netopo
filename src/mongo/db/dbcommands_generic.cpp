@@ -196,8 +196,10 @@ namespace mongo {
 		SocketException::Type end = SocketException::CONNECT_ERROR;
 		while( i <= end ){
 		    long long numExceptions = SocketException::numExceptions( i , target );
-		    if( numExceptions > 0 ) 
-			 targetInfo.append( SocketException::_getStringType(i) , numExceptions );
+		    if( numExceptions > 0 ){ 
+			targetInfo.append( SocketException::_getStringType(i) , numExceptions );
+			cout << "had sockexception" << endl;	
+		    }
 		    i = static_cast<SocketException::Type>( static_cast<int>(i) + 1 );
 		}
 

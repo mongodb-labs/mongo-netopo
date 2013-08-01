@@ -56,6 +56,7 @@ namespace mongo {
 	m["NOT_ENOUGH_RECORDS"] = "Not enough PingMonitor records to complete this action.";
 	m["CAN'T_MAKE_CLIENT_CONNECTION"] = "Cannot make client connection to host.";
 	m["NO_DATA"] = "No ping monitor data has been collected for this target.";
+	m["CONFIG_ON_SHARD"] = " is running both a config and shard server";
 	return m;
     };
 
@@ -269,14 +270,16 @@ namespace mongo {
 	    catch ( DBException& e ){
 		// unable to run isMaster command on target
 		// TODO: log this error somewhere
+		cout << "[PingMonitor::getSetServers()] : " << e.toString() << endl;
 		return;
 	    } 
 	    connPtr->done();
 	}
-	catch ( DBException& ue ){
-		// unable to connect to target
-		// TODO: log this error somewhere
-		return; 
+	catch ( DBException& e ){
+	    // unable to connect to target
+	    // TODO: log this error somewhere
+	    cout << "[PingMonitor::getSetServers()] : " << e.toString() << endl;
+	    return; 
 	}
 
 	int id = 0;
@@ -497,6 +500,63 @@ namespace mongo {
 
     }
 
+    int PingMonitor::getArbitersAndPassives( string& master , BSONObjBuilder& nodesBuilder , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+	scoped_ptr<ScopedDbConnection> connPtr;
+	BSONObj cmdReturned;
+	try{ 
+	    connPtr.reset( new ScopedDbConnection( master , socketTimeout ) );
+	    ScopedDbConnection& conn = *connPtr;
+	    try{
+		conn->runCommand( "admin" , BSON("isMaster"<<1) , cmdReturned );	
+	    }
+	    catch ( DBException& e ){
+		// unable to run isMaster command on target
+		// TODO: log this error somewhere
+		cout <<  "[" << __func__ << "] : "  << e.toString() << endl;
+		return index;
+	    } 
+	    connPtr->done();
+	}
+	catch ( DBException& e ){
+	    // unable to connect to target
+	    // TODO: log this error somewhere
+	    cout << "[" << __func__ << "] : "  << e.toString() << endl;
+	    return index; 
+	}
+	
+	if( cmdReturned["passives"].trueValue() ){
+	    vector<BSONElement> hosts = cmdReturned["passives"].Array();
+	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
+		int id = index;
+		index++;
+		BSONElement be = *i;
+		string curr = be.valuestrsafe();
+		BSONObjBuilder newHost;
+		putGenericInfo( newHost , curr , "" , "mongod" , "passive" , errors , warnings );
+		char idString[100];
+		sprintf(idString , "%d" , id);
+		nodesBuilder.append( idString , newHost.obj() );
+	    }
+	}	
+
+	if( cmdReturned["arbiters"].trueValue() ){
+	    vector<BSONElement> hosts = cmdReturned["arbiters"].Array();
+	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
+	    	int id = index;
+		index++;
+		BSONElement be = *i;
+		string curr = be.valuestrsafe();
+		BSONObjBuilder newHost;
+		putGenericInfo( newHost , curr , "" , "mongod" , "arbiter" , errors , warnings );
+		char idString[100];
+		sprintf(idString , "%d" , id);
+		nodesBuilder.append( idString , newHost.obj() );
+	    }
+	}
+
+	return index;
+    }
+
     int PingMonitor::getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 
 	scoped_ptr<ScopedDbConnection> connPtr;
@@ -522,8 +582,11 @@ namespace mongo {
 			int id = index;
 			index++;
 			BSONObjBuilder newHost;
-			if( count == 0 )
+			if( count == 0 ){
 			    putGenericInfo( newHost , currToken , "" , "mongod" , "primary" , errors , warnings );
+			    index = getArbitersAndPassives( currToken , nodes , index ,  errors , warnings);
+			   // getPassives( currToken , nodes , errors , warnings );
+			}
 			else
 			    putGenericInfo( newHost , currToken , "" , "mongod" , "secondary" , errors , warnings );
 			newHost.append( "shardName" , shardName );
@@ -555,7 +618,7 @@ namespace mongo {
 	connPtr->done();
 	}
 	catch( DBException& e ){
-	    cout << "[PingMonitor::getShardServers()] : " << e.toString() << endl;
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
 	return index;
     }
@@ -580,7 +643,7 @@ namespace mongo {
 	    }
 	connPtr->done();
 	} catch( DBException& e) {
-	    cout << "[PingMonitor::getShardServers()] : " << e.toString() << endl;
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
 	return index;
     }
@@ -623,7 +686,7 @@ namespace mongo {
 	    connPtr->done();
 	} 
 	catch( DBException& e) {
-	    cout << "[PingMonitor::getShardServers()] : " << "Couldn't connect to config server" << endl;
+	    cout << "[PingMonitor::getShardServers()] : " << e.toString() << endl;
 	}
 	return index;
     }
@@ -651,6 +714,7 @@ namespace mongo {
 			BSONObjBuilder newEdge;
 			try{ 
 			    ScopedDbConnection conn( srcHostName , socketTimeout ); 
+
 			    // create deep ping command in the form { ping : 1 , hosts : [ ] }
 			    BSONObjBuilder pingCmdBuilder;
 			    pingCmdBuilder.append( "ping" , 1 );
@@ -662,9 +726,13 @@ namespace mongo {
 			    conn->runCommand( "admin" , pingCmd , cmdReturned );	
 
 			    // if the source was unable to ping the target, mark the target as unavailable
+			    // and add an error or warning depending on the requirement level of the edge
 			    if( cmdReturned["exceptionInfo"].trueValue() ){
-				addError( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , cmdReturned["exceptionInfo"].valuestrsafe() , errors );
 				tgt->second.first = false;
+				if( isReqConn( nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe() , nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe() ) )
+				    addError( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , cmdReturned["exceptionInfo"].valuestrsafe() , errors );
+				if( isRecConn( nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe() , nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe() ) )
+				    addWarning( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , cmdReturned["exceptionInfo"].valuestrsafe() , warnings );
 			    }
 
 			    // append the target node's id with the result of the ping command to it
@@ -674,7 +742,12 @@ namespace mongo {
 			catch( DBException& e ){
 			    src->second.first = false;
 			    cout << "[PingMonitor::buildGraph()] : " << e.toString() << endl;
-			    addError( nodes.getObjectField( src->second.second )["key"].valuestrsafe() , e.toString() , errors );
+			    string srcRole = nodes.getObjectField( src->second.second ).getObjectField("type")["role"].valuestrsafe();
+			    string tgtRole =  nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe();
+			    if( isReqConn( srcRole , tgtRole ) )
+				addError( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , e.toString() , errors );
+			    if( isRecConn( srcRole , tgtRole ) ) 
+				addWarning( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , e.toString() , warnings );
 			}
 		    }
 		}
@@ -683,7 +756,6 @@ namespace mongo {
 	    }
 	}
     }
-
 
 
 
@@ -752,25 +824,22 @@ namespace mongo {
     }
  
     void PingMonitor::diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
-	for (BSONObj::iterator i = nodes.begin(); i.more(); ){
-	    BSONElement srcElem = i.next();
-	    BSONObj srcNodeInfo = srcElem.embeddedObject();
-	    for( BSONObj::iterator j = nodes.begin(); j.more(); ){
-		BSONElement tgtElem = j.next(); 
-		BSONObj tgtNodeInfo = tgtElem.embeddedObject();
-		BSONObj edge = edges.getObjectField( srcElem.fieldName() ).getObjectField( tgtElem.fieldName() );
-		if ( edge["isConnected"].boolean() == false ){
-		    if( isReqConn( srcNodeInfo.getObjectField("type")["role"].valuestrsafe() , tgtNodeInfo.getObjectField("type")["role"].valuestrsafe() ) ){
-			string err( ERRCODES["MISSING_REQ_CONN"] );
-			err += tgtNodeInfo["hostName"].valuestrsafe();	
-			addError( srcNodeInfo["key"].valuestrsafe() , err , errors );
-		    }
-		    if( isRecConn( srcNodeInfo.getObjectField("type")["role"].valuestrsafe() , tgtNodeInfo.getObjectField("type")["role"].valuestrsafe() ) ){
-			string warn( ERRCODES["MISSING_REC_CONN"] );
-			warn += tgtNodeInfo["hostName"].valuestrsafe();
-			addWarning( srcNodeInfo["key"].valuestrsafe() , warn , warnings ); 
-		    }
-		}
+
+	string config = "config";
+	vector<string> vec;
+	for(BSONObj::iterator i = nodes.begin(); i.more(); ){
+	    BSONElement iElem = i.next();
+	    BSONObj iObj = iElem.embeddedObject();
+	    if( config.compare(iObj.getObjectField("type")["role"].valuestrsafe()) == 0 ){
+		vec.push_back( iObj["key"].valuestrsafe() );
+	    }
+	}	
+
+	for(BSONObj::iterator i = nodes.begin(); i.more(); ){
+	    BSONElement iElem = i.next();
+	    BSONObj iObj = iElem.embeddedObject();
+	    if( find( vec.begin(), vec.end(),  iObj["key"].valuestrsafe() ) != vec.end() ){
+		addWarning( iObj["key"].valuestrsafe() , iObj["hostName"].valuestrsafe() + ERRCODES["CONFIG_ON_SHARD"] , warnings );
 	    }
 	}
     }
@@ -1007,128 +1076,140 @@ namespace mongo {
 		BSONObj prevErrors = BSONObj();
 		BSONObj prevWarnings = BSONObj();
 		BSONObj prevIdMap = BSONObj();
+		BSONObj prevNodes = BSONObj();
+
 		while( cursor->more() ){
 		    BSONObj curr = cursor->nextSafe();
 		    BSONObj currErrors = curr.getObjectField("errors");
 		    BSONObj currWarnings = curr.getObjectField("warnings");
 		    BSONObj currIdMap = curr.getObjectField("idMap");
+		    BSONObj currNodes = curr.getObjectField("nodes");
 
-			BSONArrayBuilder newErrors;
-			BSONArrayBuilder newWarnings;
-			BSONArrayBuilder newNodes;
-			BSONArrayBuilder removedErrors;
-			BSONArrayBuilder removedWarnings;
-			BSONArrayBuilder removedNodes;
+		    BSONArrayBuilder newErrors;
+		    BSONArrayBuilder newWarnings;
+		    BSONArrayBuilder newNodes;
+		    BSONArrayBuilder removedErrors;
+		    BSONArrayBuilder removedWarnings;
+		    BSONArrayBuilder removedNodes;
+		    BSONArrayBuilder flags;
 
-			// check for new nodes
-			for( BSONObj::iterator i = currIdMap.begin(); i.more(); ){
-			    string currKey = i.next().fieldName();
-			    if( prevIdMap[ currKey ].eoo() == true )
-				newNodes.append( currKey );
+		    // check for new nodes
+		    // and check for role change
+		    for( BSONObj::iterator i = currIdMap.begin(); i.more(); ){
+			string currKey = i.next().fieldName();
+			if( prevIdMap[ currKey ].eoo() == true )
+			    newNodes.append( currKey );
+			else{
+			    string prevRole = prevNodes.getObjectField( prevIdMap[ currKey ].valuestrsafe() ).getObjectField("type")["role"];	
+			    string currRole = currNodes.getObjectField( currIdMap[ currKey ].valuestrsafe() ).getObjectField("type")["role"];	
+			    if( currRole.compare( prevRole ) != 0 ){
+				string newFlag = "Host with key " + currKey + " changed roles from " + prevRole + " to " + currRole; 
+				flags.append( newFlag );	
+			    }
 			}
+		    }
 
-			// check for removed nodes
-			for( BSONObj::iterator i = prevIdMap.begin(); i.more(); ){
-			    string prevKey = i.next().fieldName();
-			    if( currIdMap[ prevKey ].eoo() == true )
-				removedNodes.append( prevKey );
+		    // check for removed nodes
+		    for( BSONObj::iterator i = prevIdMap.begin(); i.more(); ){
+			string prevKey = i.next().fieldName();
+			if( currIdMap[ prevKey ].eoo() == true )
+			    removedNodes.append( prevKey );
+		    }
+
+		    // check for new errors
+		    for( BSONObj::iterator i = currErrors.begin(); i.more(); ){
+			BSONElement currHost = i.next();
+			vector<BSONElement> currHostErrors = currHost.Array(); 
+			// if previous snapshot has no errors for this host, note all new errors 
+			if( prevErrors[ currHost.fieldName() ].trueValue() == false )
+			    for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+				newErrors.append( *i );	
 			}
-
-			// check for new errors
-			for( BSONObj::iterator i = currErrors.begin(); i.more(); ){
-			    BSONElement currHost = i.next();
-			    vector<BSONElement> currHostErrors = currHost.Array(); 
-			    // if previous snapshot has no errors for this host, note all new errors 
-			    if( prevErrors[ currHost.fieldName() ].trueValue() == false )
-				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+			// previous snapshot has errors for this host, but might be different from current ones
+			else{
+			    vector<BSONElement> prevHostErrors = prevErrors[ currHost.fieldName() ].Array();
+			    for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+				if( find( prevHostErrors.begin(), prevHostErrors.end(), *i ) == prevHostErrors.end() )
 				    newErrors.append( *i );	
 			    }
-			    // previous snapshot has errors for this host, but might be different from current ones
-			    else{
-				vector<BSONElement> prevHostErrors = prevErrors[ currHost.fieldName() ].Array();
-				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
-				    if( find( prevHostErrors.begin(), prevHostErrors.end(), *i ) == prevHostErrors.end() )
-					newErrors.append( *i );	
-				}
-			    }
 			}
+		    }
 
-			// check for new warnings
-			for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
-			    BSONElement currHost = i.next();
-			    vector<BSONElement> currHostWarnings = currHost.Array(); 
-			    // if previous snapshot has no warnings for this host, note all new warnings 
-			    if( prevWarnings[ currHost.fieldName() ].trueValue() == false )
-				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+		    // check for new warnings
+		    for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
+			BSONElement currHost = i.next();
+			vector<BSONElement> currHostWarnings = currHost.Array(); 
+			// if previous snapshot has no warnings for this host, note all new warnings 
+			if( prevWarnings[ currHost.fieldName() ].trueValue() == false )
+			    for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+				newWarnings.append( *i );	
+			}
+			// previous snapshot has warnings for this host, but might be different from current ones
+			else{
+			    vector<BSONElement> prevHostWarnings = prevWarnings[ currHost.fieldName() ].Array();
+			    for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+				if( find( prevHostWarnings.begin(), prevHostWarnings.end(), *i ) == prevHostWarnings.end() )
 				    newWarnings.append( *i );	
 			    }
-			    // previous snapshot has warnings for this host, but might be different from current ones
-			    else{
-				vector<BSONElement> prevHostWarnings = prevWarnings[ currHost.fieldName() ].Array();
-				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
-				    if( find( prevHostWarnings.begin(), prevHostWarnings.end(), *i ) == prevHostWarnings.end() )
-					newWarnings.append( *i );	
-				}
-			    }
 			}
+		    }
 
-
-			// check for removed errors
-			for( BSONObj::iterator i = currErrors.begin(); i.more(); ){
-			    BSONElement currHost = i.next();
-			    vector<BSONElement> currHostErrors = currHost.Array(); 
-			    // if currious snapshot has no errors for this host, note all removed errors 
-			    if( currErrors[ currHost.fieldName() ].trueValue() == false )
-				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
+		    // check for removed errors
+		    for( BSONObj::iterator i = prevErrors.begin(); i.more(); ){
+			BSONElement prevHost = i.next();
+			vector<BSONElement> prevHostErrors = prevHost.Array(); 
+			// if current snapshot has no errors for this host, note all removed errors 
+			if( currErrors[ prevHost.fieldName() ].trueValue() == false )
+			    for( vector<BSONElement>::iterator i = prevHostErrors.begin(); i!=prevHostErrors.end(); ++i){
+				removedErrors.append( *i );	
+			}
+			// current snapshot has errors for this host, but might be different from prevent ones
+			else{
+			    vector<BSONElement> currHostErrors = currErrors[ prevHost.fieldName() ].Array();
+			    for( vector<BSONElement>::iterator i = prevHostErrors.begin(); i!=prevHostErrors.end(); ++i){
+				if( find( currHostErrors.begin(), currHostErrors.end(), *i ) == currHostErrors.end() )
 				    removedErrors.append( *i );	
 			    }
-			    // currious snapshot has errors for this host, but might be different from current ones
-			    else{
-				vector<BSONElement> currHostErrors = currErrors[ currHost.fieldName() ].Array();
-				for( vector<BSONElement>::iterator i = currHostErrors.begin(); i!=currHostErrors.end(); ++i){
-				    if( find( currHostErrors.begin(), currHostErrors.end(), *i ) == currHostErrors.end() )
-					removedErrors.append( *i );	
-				}
-			    }
 			}
+		    }
 
-			// check for removed warnings
-			for( BSONObj::iterator i = currWarnings.begin(); i.more(); ){
-			    BSONElement currHost = i.next();
-			    vector<BSONElement> currHostWarnings = currHost.Array(); 
-			    // if currious snapshot has no warnings for this host, note all removed warnings 
-			    if( currWarnings[ currHost.fieldName() ].trueValue() == false )
-				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
+		    // check for removed warnings
+		    for( BSONObj::iterator i = prevWarnings.begin(); i.more(); ){
+			BSONElement prevHost = i.next();
+			vector<BSONElement> prevHostWarnings = prevHost.Array(); 
+			// if current snapshot has no warnings for this host, note all removed warnings 
+			if( currWarnings[ prevHost.fieldName() ].trueValue() == false )
+			    for( vector<BSONElement>::iterator i = prevHostWarnings.begin(); i!=prevHostWarnings.end(); ++i){
+				removedWarnings.append( *i );	
+			}
+			// current snapshot has warnings for this host, but might be different from prevent ones
+			else{
+			    vector<BSONElement> currHostWarnings = currWarnings[ prevHost.fieldName() ].Array();
+			    for( vector<BSONElement>::iterator i = prevHostWarnings.begin(); i!=prevHostWarnings.end(); ++i){
+				if( find( currHostWarnings.begin(), currHostWarnings.end(), *i ) == currHostWarnings.end() )
 				    removedWarnings.append( *i );	
 			    }
-			    // currious snapshot has warnings for this host, but might be different from current ones
-			    else{
-				vector<BSONElement> currHostWarnings = currWarnings[ currHost.fieldName() ].Array();
-				for( vector<BSONElement>::iterator i = currHostWarnings.begin(); i!=currHostWarnings.end(); ++i){
-				    if( find( currHostWarnings.begin(), currHostWarnings.end(), *i ) == currHostWarnings.end() )
-					removedWarnings.append( *i );	
-				}
-			    }
 			}
+		    }
 
 
 
-			// save all deltas to the database
+		    // save all deltas to the database
 
-			BSONObjBuilder idBuilder;
-			idBuilder.append( "currTime" , curr["currTime"].date() );
-			idBuilder.append( "prevTime" , prev["currTime"].date() );
+		    BSONObjBuilder idBuilder;
+		    idBuilder.append( "currTime" , curr["currTime"].date() );
+		    idBuilder.append( "prevTime" , prev["currTime"].date() );
 
-			BSONObjBuilder deltasBuilder;
-			deltasBuilder.append( "currTime" , curr["currTime"].date() );
-			deltasBuilder.append( "prevTime" , prev["currTime"].date() );
-			deltasBuilder.append( "newNodes" , newNodes.arr() );
-			deltasBuilder.append( "newErrors" , newErrors.arr() );
-			deltasBuilder.append( "newWarnings" , newWarnings.arr() ); 
-			deltasBuilder.append( "removedNodes" , removedNodes.arr() );
-			deltasBuilder.append( "removedErrors" , removedErrors.arr() );
-			deltasBuilder.append( "removedWarnings" , removedWarnings.arr() ); 
-			conn->update( deltasLocation , idBuilder.obj() , deltasBuilder.obj() , true); 
+		    BSONObjBuilder deltasBuilder;
+		    deltasBuilder.append( "currTime" , curr["currTime"].date() );
+		    deltasBuilder.append( "prevTime" , prev["currTime"].date() );
+		    deltasBuilder.append( "newNodes" , newNodes.arr() );
+		    deltasBuilder.append( "newErrors" , newErrors.arr() );
+		    deltasBuilder.append( "newWarnings" , newWarnings.arr() ); 
+		    deltasBuilder.append( "removedNodes" , removedNodes.arr() );
+		    deltasBuilder.append( "removedErrors" , removedErrors.arr() );
+		    deltasBuilder.append( "removedWarnings" , removedWarnings.arr() ); 
+		    conn->update( deltasLocation , idBuilder.obj() , deltasBuilder.obj() , true); 
 
 		    prev = curr;
 		    prevErrors = currErrors;
