@@ -53,11 +53,7 @@
 	    self = HostAndPort( selfHostName + ":" + ss.str() );
 
 	    //TODO: choose db based on type of mongo instance
-	    db = "test";
-	    graphsLocation = db+"."+outerCollection+"."+collectionPrefix+"."+graphs;
-	    statsLocation = db+"."+outerCollection+"."+collectionPrefix+"."+stats;
-	    deltasLocation = db+"."+outerCollection+"."+collectionPrefix+"."+deltas;
-	    allNodesLocation = db+"."+outerCollection+"."+collectionPrefix+"."+allNodes;
+	    writeLocation = "test.pingMonitor." + collectionPrefix + ".";
 
 	    alive = true;
 	}
@@ -100,32 +96,19 @@
     	string networkType;
 	int numPings;
 	long long lastPingNetworkMillis;
-	string graphsLocation;
-	string statsLocation;
-	string deltasLocation;
-	string allNodesLocation;
- 
+
 	// data stored in DBDirectClient's
 	// [local|config].pingMonitor.[clusterId|replsetName].[graphs|stats|deltas]
 	// local if this is a mongod, config if mongos
 	// clusterId if target is shardedCluster, replsetName if target is replicaSet
 	// graphs, stats, and deltas stored for both types
-	string db;
-	static const string outerCollection;
-	static const string graphs;
-	static const string deltas;
-	static const string stats;
-	static const string allNodes;
 
-	static const string replicaSet;
-	static const string shardedCluster;
+	string writeLocation;
 
-	
     	virtual void run();
 	void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
 
-
-	bool writeMonitorData( BSONObj& toWrite );
+	void writeData( BSONObj& nodes , BSONObj& edges , BSONObj& errors , BSONObj& warnings );
 
 	void doPingForReplset();
 
@@ -135,30 +118,26 @@
 
 	void addNewNodes( BSONObj& nodes );
 
-	static void initializeCharts();
-	void addError(const string& key , const string& err , map<string, vector<string> >& errors);
-	void addWarning(const string& key , const string& warning , map<string, vector<string> >& warnings);
+	// get information about nodes
+	void getShardServers( HostAndPort& target , BSONObjBuilder& nodes , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	void getMongosServers( HostAndPort& target , BSONObjBuilder& nodes , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	void getConfigServers( HostAndPort& target , BSONObjBuilder& nodes , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	void getArbitersAndPassives( const string& master , BSONObjBuilder& nodesBuilder , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+    	void addNode( BSONObjBuilder& nodes , const string& hostName , const string& process , const string& role , map< string , vector<string> >& errors , map<string , vector<string> >& warnings , const string& shardName = "" ); 
+	bool collectClientInfo( const string& key , const HostAndPort& hp , BSONObjBuilder& newHost , const string& process , const string& role , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
+	void addAlert( const string& key ,const string& alert , map<string, vector<string> >& loc );
 
-
-
-	void putGenericInfo( BSONObjBuilder& newHost , const string& hostName , const string& machine , const string& process , const string& role , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	int getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	int getMongosServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	int getConfigServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	int getArbitersAndPassives( string& master , BSONObjBuilder& nodesBuilder , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-
+	// get information about edges
 	void buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-	void buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap );
+	static void initializeCharts();
+
+	// do additional checks on the configuration of the network 
 	void diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
-
-
-    void collectClientInfoHelper( HostAndPort& hp , BSONObjBuilder& newHost , const string& db , string cmdName );
-    void collectClientInfo( string connString , BSONObjBuilder& newHost , BSONObj& type , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 
 	bool isReqConn( const string& src , const string& tgt);
 	bool isRecConn( const string& src , const string& tgt);
 
     };
 
-    BSONObj convertToBSON( map< string , vector<string> >& m ); 
+    BSONObj convertToBSON( map< string , vector<string> >& m , long long currTime ); 
 }

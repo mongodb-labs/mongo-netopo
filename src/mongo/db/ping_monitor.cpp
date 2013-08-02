@@ -37,14 +37,27 @@ namespace mongo {
 
     BSONObj PingMonitor::reqConnChart;
     BSONObj PingMonitor::recConnChart;
-    const string PingMonitor::outerCollection = "pingMonitor";
-    const string PingMonitor::graphs = "graphs";
-    const string PingMonitor::deltas = "deltas";
-    const string PingMonitor::stats = "stats";
-    const string PingMonitor::allNodes = "allNodes";
 
-    const string PingMonitor::replicaSet = "replicaSet";
-    const string PingMonitor::shardedCluster = "shardedCluster";
+
+    // string literals
+    const string REPLICASET = "replicaSet";
+    const string SHARDEDCLUSTER = "shardedCluster";
+
+    const string PRIMARY = "primary";
+    const string SECONDARY = "secondary";
+    const string ARBITER = "arbiter";
+    const string PASSIVE = "passive";
+    const string CONFIG = "config";
+
+    const string MONGOD = "mongod";
+    const string MONGOS = "mongos";
+
+    const string NODES = "nodes";
+    const string EDGES = "edges";
+    const string ERRORS = "errors";
+    const string WARNINGS = "warnings";
+    const string STATS = "stats";
+    const string DELTAS = "deltas";
 
     // Error codes
     map< string , string > PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
@@ -108,19 +121,21 @@ namespace mongo {
     void PingMonitor::clearHistory(){
 	try{
 	    ScopedDbConnection conn( self.toString() , socketTimeout );
-	    conn->query( graphsLocation , Query( BSON( "drop" << 1 ) ) ); 
+	    conn->query( writeLocation + NODES, Query( BSON( "drop" << 1 ) ) ); 
+	    conn->query( writeLocation + EDGES, Query( BSON( "drop" << 1 ) ) ); 
+	    conn->query( writeLocation + ERRORS, Query( BSON( "drop" << 1 ) ) ); 
+	    conn->query( writeLocation + WARNINGS, Query( BSON( "drop" << 1 ) ) ); 
 	    conn.done();
 	}
 	catch( DBException& e){
-	    cout << "[PingMonitor::clearHistory()] : " << e.toString() << endl;
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
     }
 
-   
     // Retrieve from ping monitor storage database
     BSONObj PingMonitor::getMonitorInfo(){ 
 	BSONObjBuilder toReturn;
-	BSONObj latestMonitorInfo;
+/*	BSONObj latestMonitorInfo;
 	scoped_ptr<ScopedDbConnection> connPtr;
 	try{
 	    connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) ); 
@@ -174,224 +189,60 @@ namespace mongo {
 	toReturn.append( "nodes" , nodeShow.obj() );
 	toReturn.append( "errors" , latestMonitorInfo.getObjectField("errors") );
 	toReturn.append( "warnings" , latestMonitorInfo.getObjectField("warnings") );
+	*/
 	return toReturn.obj(); 
     }
     
-
-    void PingMonitor::doPingForTarget(){
-
-	if( on == false )
-	    return;
-	else
-  
-	if( networkType == replicaSet )
-	    doPingForReplset();
-	else if( networkType == shardedCluster )
-	    doPingForCluster();
-    }
-
-    void PingMonitor::doPingForReplset(){
-
-	cout << "[PingMonitor::run()] : " << "PingMonitor thread for " << target.toString() << "  awake" << endl;
-
-	// create a typedef for the Graph type
-	// Add nodes to the graph
-	// Write out the edges in the graph
-	// declare a graph object
-	// add the edges to the graph object
-
-	BSONObjBuilder resultBuilder;
-	resultBuilder.append( "target" , target.toString(true) );
-
-	BSONObjBuilder nodesBuilder, edgesBuilder, idMapBuilder;
-	BSONObj nodes, edges, idMap, errors, warnings;
-	map<string, vector<string> > errorsBuilder, warningsBuilder;
-
-	getSetServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
-	nodes = nodesBuilder.obj();
-
-	buildGraph( nodes , edgesBuilder , errorsBuilder , warningsBuilder );
-	edges = edgesBuilder.obj();
-
-	buildIdMap( nodes , idMapBuilder );
-	idMap = idMapBuilder.obj();
-
-//	diagnoseSet( nodes , edges , errorsBuilder , warningsBuilder );
-	errors = convertToBSON( errorsBuilder );
-	warnings = convertToBSON( warningsBuilder );
-
-	resultBuilder.append("nodes" , nodes);   
-	resultBuilder.append("edges" , edges);
-	resultBuilder.append("idMap" , idMap);
-	resultBuilder.append("errors" , errors);
-	resultBuilder.append("warnings" , warnings); 
-	resultBuilder.appendDate("currTime" , curTimeMillis64() );
-
-	addNewNodes( nodes );
-	
-	//TODO: choose db based on type of mongo instance
-	db = "test";
-
-	BSONObj result = resultBuilder.obj();
-	bool written = writeMonitorData( result ); 
-	if( written == false ){
-	    // TODO: Properly log inability to write to self 
-	    cout << "[PingMonitor::doPingForReplset()] : " << "Failed to write PingMonitor data from " + target.toString() + " to self on " + graphsLocation << endl;
-	}
-
-	calculateStats();
-	calculateDeltas();
-	numPings++;
-    }
-
-    bool PingMonitor::writeMonitorData( BSONObj& toWrite ){
+    void PingMonitor::writeData( BSONObj& nodes , BSONObj& edges , BSONObj& errors , BSONObj&  warnings ){
+	cout << "reaches" << endl;
 	try{
 	    ScopedDbConnection conn( self.toString() , socketTimeout); 
-	    conn->insert( graphsLocation , toWrite );
+	    conn->insert( writeLocation + NODES , nodes );
+	    conn->insert( writeLocation + EDGES , edges );
+	    conn->insert( writeLocation + ERRORS , errors );
+	    conn->insert( writeLocation + WARNINGS , warnings );
 	    conn.done();
 	    numPings++;
-	    return true;
 	} catch( DBException& e ){
-	    cout << "[PingMonitor::writeMonitorData()] : " << e.toString() << endl;
-	    return false;
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
     }
 
-    void PingMonitor::getSetServers( HostAndPort& target , BSONObjBuilder& nodesBuilder , map< string , vector<string> >& errorsBuilder , map< string, vector<string> >& warningsBuilder ){
+    void PingMonitor::doPingForTarget(){
+	if( on == false )
+	    return;
+   
+	cout << "[" << __func__ << "] : " << "PingMonitor thread for " << target.toString() << "  awake" << endl;
 
-	scoped_ptr<ScopedDbConnection> connPtr;
-	BSONObj cmdReturned;
-	try{ 
-	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
-	    ScopedDbConnection& conn = *connPtr;
-	    try{
-		conn->runCommand( "admin" , BSON("isMaster"<<1) , cmdReturned );	
-	    }
-	    catch ( DBException& e ){
-		// unable to run isMaster command on target
-		// TODO: log this error somewhere
-		cout << "[PingMonitor::getSetServers()] : " << e.toString() << endl;
-		return;
-	    } 
-	    connPtr->done();
-	}
-	catch ( DBException& e ){
-	    // unable to connect to target
-	    // TODO: log this error somewhere
-	    cout << "[PingMonitor::getSetServers()] : " << e.toString() << endl;
-	    return; 
-	}
+	long long currTime = curTimeMillis64();
 
-	int id = 0;
-
-	if( cmdReturned["hosts"].trueValue() ){
-	    vector<BSONElement> hosts = cmdReturned["hosts"].Array();
-	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
-		BSONElement be = *i;
-		string curr = be.valuestrsafe();
-		BSONObjBuilder newHost;
-		if( curr.compare(cmdReturned["primary"].valuestrsafe()) == 0 )
-		    putGenericInfo( newHost , curr , "" , "mongod" , "primary" , errorsBuilder , warningsBuilder );
-		else
-		    putGenericInfo( newHost , curr , "" , "mongod" , "secondary" , errorsBuilder , warningsBuilder );
-		char idString[100];
-		sprintf(idString , "%d" , id);
-		nodesBuilder.append( idString , newHost.obj() );
-		id++;
-	    }
-	}	
-
-	if( cmdReturned["passives"].trueValue() ){
-	    vector<BSONElement> hosts = cmdReturned["passives"].Array();
-	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
-		BSONElement be = *i;
-		string curr = be.valuestrsafe();
-		BSONObjBuilder newHost;
-		newHost.append( "hostName" , curr );
-		newHost.append( "machine" , "" );
-		newHost.append( "key" , curr + "_" + "" + "_" + "mongod" );
-		BSONObj type = BSON( "process" << "mongod" << "role" << "passive" );
-		newHost.append( "type" , type );
-		collectClientInfo( curr , newHost , type , errorsBuilder , warningsBuilder );
-		char idString[100];
-		sprintf(idString , "%d" , id);
-		nodesBuilder.append( idString , newHost.obj() );
-		id++;
-	    }
-	}	
-
-	if( cmdReturned["arbiters"].trueValue() ){
-	    vector<BSONElement> hosts = cmdReturned["arbiters"].Array();
-	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
-		BSONElement be = *i;
-		string curr = be.valuestrsafe();
-		BSONObjBuilder newHost;
-		newHost.append( "hostName" , curr );
-		newHost.append( "machine" , "" );
-		newHost.append( "key" , curr + "_" + "" + "_" + "mongod" );
-		BSONObj type = BSON( "process" << "mongod" << "role" << "arbiter" );
-		newHost.append( "type" , type );
-		collectClientInfo( curr , newHost , type , errorsBuilder , warningsBuilder );
-		char idString[100];
-		sprintf(idString , "%d" , id);
-		nodesBuilder.append( idString , newHost.obj() );
-		id++;
-	    }
-	}	
-    }
-
-    void PingMonitor::doPingForCluster(){
-    
-	cout << "[PingMonitor::run()] : " << "PingMonitor thread for " << target.toString() << "  awake" << endl;
-
-	// create a typedef for the Graph type
-	// Add nodes to the graph
-	// Write out the edges in the graph
-	// declare a graph object
-	// add the edges to the graph object
-
-	BSONObjBuilder resultBuilder;
-	resultBuilder.append( "target" , target.toString(true) );
-
-	BSONObjBuilder nodesBuilder, edgesBuilder, idMapBuilder;
-	BSONObj nodes, edges, idMap, errors, warnings;
+	BSONObjBuilder nodesBuilder, edgesBuilder; 
 	map<string, vector<string> > errorsBuilder, warningsBuilder;
 
-	int index = 0;
-
-	index = getShardServers( target , nodesBuilder , index , errorsBuilder , warningsBuilder );
-	index = getMongosServers( target , nodesBuilder , index , errorsBuilder , warningsBuilder );
-	index = getConfigServers( target , nodesBuilder , index , errorsBuilder , warningsBuilder );
-	nodes = nodesBuilder.obj();
-
-	buildGraph( nodes , edgesBuilder , errorsBuilder , warningsBuilder );
-	edges = edgesBuilder.obj();
-
-	buildIdMap( nodes , idMapBuilder );
-	idMap = idMapBuilder.obj();
-
-	diagnose( nodes , edges , errorsBuilder , warningsBuilder );
-	errors = convertToBSON( errorsBuilder );
-	warnings = convertToBSON( warningsBuilder );
-
-	resultBuilder.append("nodes" , nodes);   
-	resultBuilder.append("edges" , edges);
-	resultBuilder.append("idMap" , idMap);
-	resultBuilder.append("errors" , errors);
-	resultBuilder.append("warnings" , warnings); 
-	resultBuilder.appendDate("currTime" , curTimeMillis64() );
-
-    	addNewNodes( nodes );
-	
-	BSONObj result = resultBuilder.obj();
-	bool written = writeMonitorData( result ); 
-	if( written == false ){
-	    // TODO: make error an errcode 
-	    cout << "[PingMonitor::doPingForCluster()] : " << "Failed to write PingMonitor data to self" << endl;
+	if( networkType == REPLICASET )
+	    getSetServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
+	else{ 
+	    getShardServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
+	    getMongosServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
+	    getConfigServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
 	}
- 
-	calculateStats();
-	calculateDeltas();
+	nodesBuilder.append( "currTime" , currTime );
+	BSONObj nodes = nodesBuilder.obj();
+
+	//addNewNodes( nodes );
+
+	//buildGraph( nodes , edgesBuilder , errorsBuilder , warningsBuilder );
+	edgesBuilder.append( "currTime" , currTime );
+	BSONObj edges = edgesBuilder.obj();
+
+	// TODO: add network type check in diagnose()
+	//diagnose( nodes , edges , errorsBuilder , warningsBuilder );
+	BSONObj errors = convertToBSON( errorsBuilder , currTime );
+	BSONObj warnings = convertToBSON( warningsBuilder , currTime );
+
+	//calculateDeltas();
+
+	writeData( nodes , edges , errors , warnings ); 
     }
 
     void PingMonitor::addNewNodes( BSONObj& nodes ){
@@ -403,10 +254,10 @@ namespace mongo {
 		BSONElement nodeElem = i.next();
 		BSONObj nodeObj = nodeElem.embeddedObject();
 		string nodeKey = nodeObj["key"].valuestrsafe();
-		scoped_ptr<DBClientCursor> cursor( conn->query( allNodesLocation , QUERY("key" << nodeKey ) ) );
+		scoped_ptr<DBClientCursor> cursor( conn->query( writeLocation , QUERY("key" << nodeKey ) ) );
 		if( cursor->more() ){
 		    // node is already in allNodes
-		    // potentially add more information such as previous roles, uptime etc
+		    // potentially add more information such as previous roles
 		    //BSONObjBuilder nodeFields;
 		    //nodeFields.append( "currentRole" , nodeObj.getObjectField("type")["role"].valuestrsafe() );
 		    //nodeSubObj.appendArray( "previousRoles" )
@@ -414,8 +265,12 @@ namespace mongo {
 		}
 		else{
 		    // need to add node to allNodes
-		    BSONObj newNode = BSON( "key" << nodeObj["key"].valuestrsafe() );
-		    conn->insert( allNodesLocation , newNode );
+		    BSONObjBuilder thisNode;
+		    thisNode.append( "hostName" , nodeObj["hostName"].valuestrsafe() );
+		    thisNode.append( "process" , nodeObj.getObjectField("type")["process"].valuestrsafe() );
+		    thisNode.append( "currentRole" , nodeObj.getObjectField("type")["process"].valuestrsafe() );
+		    thisNode.append( "key" , nodeObj["key"].valuestrsafe() );
+//		    conn->update( allNodesLocation , BSON("key" << nodeObj["key"].valuestrsafe()) , thisNode.obj() , true );
 		}
 	    }	
 	connPtr->done();	
@@ -423,9 +278,10 @@ namespace mongo {
 	catch( DBException& e ){
 	    cout << "[PingMonitor::addNewNodes] : " << e.toString() << endl;
 	}
+    
     }
 
-    BSONObj convertToBSON( map<string, vector<string> >& m ){
+    BSONObj convertToBSON( map<string, vector<string> >& m , long long currTime ){
 	BSONObjBuilder b;
 	for( map<string, vector<string> >::iterator mapItr = m.begin(); mapItr!=m.end(); ++mapItr){
 	    BSONArrayBuilder aBuilder;
@@ -433,197 +289,99 @@ namespace mongo {
 		aBuilder.append( *vecItr );	
 	    }
 	   b.append( mapItr->first , aBuilder.arr() ); 
-	} 
+	}
+	b.append( "currTime" , currTime ); 
 	return b.obj();
     }
 
-    void PingMonitor::collectClientInfoHelper( HostAndPort& hp , BSONObjBuilder& newHost , const string& db , string cmdName ){
-	BSONObj cmdReturned;
-	try{
-	    ScopedDbConnection conn( hp.toString() );
-	    conn->runCommand( db, BSON(cmdName<<1) , cmdReturned );
-	    newHost.append( cmdName , cmdReturned );
-	    conn.done();
-	}
-	catch( DBException& e){
-	    newHost.append( cmdName , e.toString() );
-	}
-    }
-
-    void PingMonitor::collectClientInfo( string connString , BSONObjBuilder& newHost , BSONObj& type , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){	
-	HostAndPort hp( connString );
-
-	string mongod = "mongod";
-	string primary = "primary";
-	string secondary = "secondary";
-
-	//all nodes collect the following
-	collectClientInfoHelper( hp , newHost , "admin" , "hostInfo" );
-	collectClientInfoHelper( hp , newHost , "admin" , "serverStatus" );
-	collectClientInfoHelper( hp , newHost , "admin" , "shardVersion" );
-
-	// only mongod instances collect the following
-	if( mongod.compare(type.getStringField("role")) == 0 )
-	    collectClientInfoHelper( hp , newHost , "admin" , "buildInfo" );
-
-	// only shard mongod instances collect the following
-	if ( primary.compare(type.getStringField("role")) == 0 || secondary.compare(type.getStringField("role")) == 0 )
-	    collectClientInfoHelper( hp , newHost , "admin" , "isMaster" );
-
-
-    }
-
-    void PingMonitor::putGenericInfo( BSONObjBuilder& newHost , const string& hostName , const string& machine , const string& process , const string& role , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
-
-	// append all generic information found in the config server about this node
-	newHost.append( "ipaddr" , "testing");
-	newHost.append( "hostName" , hostName );
-	newHost.append( "machine" , machine );
-	newHost.append( "key" , hostName + "_" + machine + "_" + process );
-	BSONObj type = BSON( "process" << process << "role" << role );;	
-	newHost.append( "type" , type );
-
-	// check if we can make a client connection to this host
-	// and if so, ask it for more information about itself
-	// and mark it as available to us
-	try{ 
-	    ScopedDbConnection conn( hostName  , socketTimeout ); 
-	    newHost.append("available", true );
-	    collectClientInfo( hostName , newHost , type , errors , warnings );
-	    conn.done();
-	}
-	catch( DBException& e ){
-	    addError(  hostName + "_" + machine + "_" + process, e.toString() , errors );
-	    newHost.append("available", false );
-	}
-
-
-    }
-
-    int PingMonitor::getArbitersAndPassives( string& master , BSONObjBuilder& nodesBuilder , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+    void PingMonitor::getSetServers( HostAndPort& target , BSONObjBuilder& nodes , map< string , vector<string> >& errors , map< string, vector<string> >& warnings ){
 	scoped_ptr<ScopedDbConnection> connPtr;
 	BSONObj cmdReturned;
 	try{ 
-	    connPtr.reset( new ScopedDbConnection( master , socketTimeout ) );
+	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
 	    ScopedDbConnection& conn = *connPtr;
-	    try{
-		conn->runCommand( "admin" , BSON("isMaster"<<1) , cmdReturned );	
-	    }
-	    catch ( DBException& e ){
-		// unable to run isMaster command on target
-		// TODO: log this error somewhere
-		cout <<  "[" << __func__ << "] : "  << e.toString() << endl;
-		return index;
-	    } 
+	    conn->runCommand( "admin" , BSON("isMaster"<<1) , cmdReturned );	
 	    connPtr->done();
 	}
 	catch ( DBException& e ){
-	    // unable to connect to target
-	    // TODO: log this error somewhere
-	    cout << "[" << __func__ << "] : "  << e.toString() << endl;
-	    return index; 
+	    cout << "[PingMonitor::getSetServers()] : " << e.toString() << endl;
+	    //TODO: handle case that we can't get any information from the target
+	    return; 
 	}
-	
-	if( cmdReturned["passives"].trueValue() ){
-	    vector<BSONElement> hosts = cmdReturned["passives"].Array();
+	if( cmdReturned["hosts"].trueValue() ){
+	    vector<BSONElement> hosts = cmdReturned["hosts"].Array();
 	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
-		int id = index;
-		index++;
 		BSONElement be = *i;
-		string curr = be.valuestrsafe();
-		BSONObjBuilder newHost;
-		putGenericInfo( newHost , curr , "" , "mongod" , "passive" , errors , warnings );
-		char idString[100];
-		sprintf(idString , "%d" , id);
-		nodesBuilder.append( idString , newHost.obj() );
+		const string curr = be.valuestrsafe();
+		if( curr.compare(cmdReturned["primary"].valuestrsafe()) == 0 ){
+		    addNode( nodes , curr , "mongod" , "primary" , errors , warnings );
+		    getArbitersAndPassives( curr , nodes , errors , warnings );
+		}
+		else
+		    addNode( nodes , curr , "mongod" , "secondary" , errors , warnings );
 	    }
 	}	
-
-	if( cmdReturned["arbiters"].trueValue() ){
-	    vector<BSONElement> hosts = cmdReturned["arbiters"].Array();
-	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i){
-	    	int id = index;
-		index++;
-		BSONElement be = *i;
-		string curr = be.valuestrsafe();
-		BSONObjBuilder newHost;
-		putGenericInfo( newHost , curr , "" , "mongod" , "arbiter" , errors , warnings );
-		char idString[100];
-		sprintf(idString , "%d" , id);
-		nodesBuilder.append( idString , newHost.obj() );
-	    }
-	}
-
-	return index;
     }
 
-    int PingMonitor::getShardServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
-
+    void PingMonitor::getShardServers( HostAndPort& target , BSONObjBuilder& nodes , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 	scoped_ptr<ScopedDbConnection> connPtr;
 	try{
 	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
 	    ScopedDbConnection& conn = *connPtr;
 	    auto_ptr<DBClientCursor> cursor( conn->query( "config.shards" , BSONObj() ) ) ;
-
 	    while( cursor->more() ){
 		BSONObj p = cursor->nextSafe();
 		string hostField = p.getStringField("host");
 		string::size_type startPos = hostField.find("/");
-
 		if( startPos != string::npos ){
 		    string shardName = hostField.substr(0, startPos); 
 		    string memberHosts = hostField.substr(startPos + 1);
 		    string delimiter = ",";
 		    int count = 0;
 		    size_t currPos = 0;
-		    string currToken;	
 		    while( (currPos = memberHosts.find(delimiter)) != string::npos ){
-			currToken = memberHosts.substr(0 , currPos);
-			int id = index;
-			index++;
-			BSONObjBuilder newHost;
+			const string currToken = memberHosts.substr(0 , currPos);
 			if( count == 0 ){
-			    putGenericInfo( newHost , currToken , "" , "mongod" , "primary" , errors , warnings );
-			    index = getArbitersAndPassives( currToken , nodes , index ,  errors , warnings);
-			   // getPassives( currToken , nodes , errors , warnings );
-			}
+			    getArbitersAndPassives( currToken , nodes ,  errors , warnings);
+			    addNode( nodes , currToken , "mongod" , "primary" , errors , warnings , shardName ); }
 			else
-			    putGenericInfo( newHost , currToken , "" , "mongod" , "secondary" , errors , warnings );
-			newHost.append( "shardName" , shardName );
-			char idString[100];
-			sprintf(idString , "%d" , id);
-			nodes.append( idString , newHost.obj() );
+			    addNode( nodes , currToken , "mongod" , "secondary" , errors , warnings , shardName );
 			memberHosts.erase(0, currPos + delimiter.length());
-			count++; 
-		    }			
-		    int id = index;
-		    index++;
-		    BSONObjBuilder newHost;
-		    putGenericInfo( newHost , memberHosts , "" , "mongod" , "secondary" , errors , warnings );
-		    newHost.append( "shardName" , shardName );
-		    char idString[100];
-		    sprintf(idString , "%d" , id);
-		    nodes.append( idString , newHost.obj() );
-		}
-		else{
-		    int id = index;
-		    index++;
-		    BSONObjBuilder newHost;
-		    putGenericInfo( newHost , p.getStringField("host") , "" , "mongod" , "primary" , errors , warnings );
-		    char idString[100];
-		    sprintf(idString , "%d" , id);
-		    nodes.append( idString , newHost.obj() );
-		} 
-	    }
-	connPtr->done();
-	}
+			count++; }			
+		    addNode( nodes , memberHosts , "mongod" , "secondary" , errors , warnings );}
+		else
+		    addNode( nodes , p.getStringField("host") , "mongod" , "primary" , errors , warnings );}
+	    connPtr->done(); }
 	catch( DBException& e ){
 	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
-	return index;
     }
 
-    int PingMonitor::getMongosServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+    void PingMonitor::getArbitersAndPassives( const string& master , BSONObjBuilder& nodes , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+	scoped_ptr<ScopedDbConnection> connPtr;
+	BSONObj cmdReturned;
+	try{ 
+	    connPtr.reset( new ScopedDbConnection( master , socketTimeout ) );
+	    ScopedDbConnection& conn = *connPtr;
+	    conn->runCommand( "admin" , BSON("isMaster"<<1) , cmdReturned );	
+	    connPtr->done();
+	}
+	catch ( DBException& e ){
+	    cout << "[" << __func__ << "] : "  << e.toString() << endl;
+	}
+	if( cmdReturned["passives"].trueValue() ){
+	    vector<BSONElement> hosts = cmdReturned["passives"].Array();
+	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i)
+		addNode( nodes , (*i).valuestrsafe() , "mongod" , "passive" , errors , warnings );
+	}	
+	if( cmdReturned["arbiters"].trueValue() ){
+	    vector<BSONElement> hosts = cmdReturned["arbiters"].Array();
+	    for( vector<BSONElement>::iterator i = hosts.begin(); i!=hosts.end(); ++i)
+		addNode( nodes , (*i).valuestrsafe() , "mongod" , "arbiter" , errors , warnings );
+	}
+    }
+
+     void PingMonitor::getMongosServers( HostAndPort& target , BSONObjBuilder& nodes , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 	scoped_ptr<ScopedDbConnection> connPtr;
 	auto_ptr<DBClientCursor> cursor;
 	try{
@@ -632,146 +390,181 @@ namespace mongo {
 	    scoped_ptr<DBClientCursor> cursor( conn->query( "config.mongos" , BSONObj() ) ) ;
 	    while( cursor->more()){
 		BSONObj p = cursor->nextSafe();
-		string hostField = p.getStringField("_id");
-		int id = index;
-		index++;
-		BSONObjBuilder newHost;
-		putGenericInfo( newHost, hostField, "", "mongos", "mongos", errors , warnings);
-		char idString[100];
-		sprintf(idString , "%d" , id);
-		nodes.append( idString , newHost.obj() );
+		addNode( nodes , p.getStringField("_id") , "mongos" , "mongos" , errors , warnings );
 	    }
-	connPtr->done();
+	    connPtr->done();
 	} catch( DBException& e) {
 	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
-	return index;
     }
 
-    int PingMonitor::getConfigServers( HostAndPort& target , BSONObjBuilder& nodes , int index , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+    void PingMonitor::getConfigServers( HostAndPort& target , BSONObjBuilder& nodes , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 	scoped_ptr<ScopedDbConnection> connPtr;
-	string delimiter = ",";
 	try{
 	    connPtr.reset( new ScopedDbConnection( target.toString() , socketTimeout ) );
 	    ScopedDbConnection& conn = *connPtr;
 	    BSONObj cmdReturned;
 	    conn->runCommand("admin" , BSON("getCmdLineOpts"<<1) , cmdReturned ); 
-
 	    string hosts = cmdReturned["parsed"]["configdb"].valuestrsafe();
-
-	    int count = 0;
 	    size_t currPos = 0;
 	    string currToken;	
+	    string delimiter = ",";
 	    while( (currPos = hosts.find(delimiter)) != string::npos ){
-		currToken = hosts.substr(0 , currPos);
-		int id = index;
-		index++;
-		BSONObjBuilder newHost;
-		putGenericInfo( newHost , currToken , "" , "mongod" , "config" , errors, warnings);
-		char idString[100];
-		sprintf(idString , "%d" , id);
-		nodes.append( idString , newHost.obj() );
+		addNode( nodes , hosts.substr(0 , currPos) , "mongod" , "config" , errors , warnings );
 		hosts.erase(0, currPos + delimiter.length());
-		count++; 
 	    }			
-
-	    int id = index;
-	    index++;
-	    BSONObjBuilder newHost;
-	    putGenericInfo( newHost, hosts, "", "mongod" , "config" , errors, warnings);
-	    char idString[100];
-	    sprintf(idString , "%d" , id);
-	    nodes.append( idString , newHost.obj() );
-
+	    addNode( nodes , hosts , "mongod" , "config" , errors , warnings );
 	    connPtr->done();
 	} 
 	catch( DBException& e) {
-	    cout << "[PingMonitor::getShardServers()] : " << e.toString() << endl;
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
-	return index;
+    }
+
+    void PingMonitor::addNode( BSONObjBuilder& nodes , const string& hostName , const string& process , const string& role , map< string , vector<string> >& errors , map<string , vector<string> >& warnings , const string& shardName ){
+
+	HostAndPort hp;
+	try{
+	    hp = HostAndPort( hostName );
+	}
+	catch( std::exception e ){
+	    //TODO: hostname is invalid
+	    return;
+	} 
+
+	BSONObjBuilder newHost;
+	string key = hostName + "_" + process;
+	newHost.append( "hostName" , hostName );
+	newHost.append( "process" , process );
+	newHost.append( "role" , role );
+	if( shardName.compare( "" ) != 0 )
+	    newHost.append( "shardName" , shardName );
+	// check if we can make a client connection to this host
+	// and if so, mark it as reachable
+	// and ask it for more information about itself
+	try{ 
+	    ScopedDbConnection conn( hostName  , socketTimeout ); 
+	    bool stillConnected = collectClientInfo( key , hp , newHost , process , role , errors , warnings );
+	    /* TODO
+	    string machine =  "";
+	    newHost.append( "machine" , machine ); */
+	    if( stillConnected )
+		newHost.append( "reachable" , true );
+	    conn.done();
+	}
+	catch( DBException& e ){
+	    newHost.append("reachable", false );
+	    // TODO: make the key include the machine?
+	    // Could be difficult if machine info only available by asking node about itself
+	    addAlert(  key ,  e.toString() , errors );
+	}
+	nodes.append( key , newHost.obj() ); 
+    }
+
+    bool PingMonitor::collectClientInfo( const string& key , const HostAndPort& hp , BSONObjBuilder& newHost , const string& process , const string& role , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+	try{
+	    ScopedDbConnection conn( hp.toString() );
+
+	    // all nodes collect the following
+	    { BSONObj cmdReturned;
+	    conn->runCommand( "admin" , BSON("hostInfo"<<1) , cmdReturned );
+	    newHost.append( "hostInfo" , cmdReturned ); }
+
+	    { BSONObj cmdReturned;
+	    conn->runCommand( "admin" , BSON("serverStatus"<<1) , cmdReturned );
+	    newHost.append( "serverStatus" , cmdReturned ); }
+
+	    { BSONObj cmdReturned;
+	    conn->runCommand( "admin" , BSON("shardVersion"<<1) , cmdReturned );
+	    newHost.append( "shardVersion" , cmdReturned ); }
+
+	    // only mongod instances collect the following
+	    if( process.compare( MONGOD ) == 0 ){
+		BSONObj cmdReturned;
+		conn->runCommand( "admin" , BSON("buildInfo"<<1) , cmdReturned );
+		newHost.append( "buildInfo" , cmdReturned ); }
+
+	    /* This info doesn't seem all that useful and is kind of redundant?
+	    // only shard mongod instances collect the following
+	    if( role.compare( PRIMARY ) == 0 || role.compare( SECONDARY ) == 0 ){
+		BSONObj cmdReturned;
+		conn->runCommand( "admin" , BSON("isMaster"<<1) , cmdReturned );
+		newHost.append( "isMaster" , cmdReturned ); }
+	    */
+	    conn.done();
+	}
+	catch( DBException& e){
+	    addAlert( key , e.toString() , errors );
+	    return false;
+	}
+	return true;
     }
 
     void PingMonitor::buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 
-	// create a map of <host:port> strings to < availability , id >
-	map<string , pair<bool, string > > availableNodes;
+	// create a map of node keys to reachability
+	map< string , bool > reachableNodes;
 	for( BSONObj::iterator n = nodes.begin(); n.more(); ){
 	    BSONElement nElem = n.next();
-	    BSONObj nObj = nElem.embeddedObject();
-	    pair<bool, string > p ( nObj.getBoolField("available") , nElem.fieldName() );
-	    availableNodes[ nObj.getStringField("hostName") ] = p;	    
+	    reachableNodes[ nElem.fieldName() ] = nObj.embeddedObject().getBoolField("reachable");	    
 	}
 
-	for (map<string, pair<bool,string> >::iterator src = availableNodes.begin(); src!=availableNodes.end(); ++src ){
-	    // only continue if we have been able to make a client connection to this instance (src)
-	    if( src->second.first == true){
-		string srcHostName = src->first;
+	for (map<string, bool >::iterator src = reachableNodes.begin(); src!=reachableNodes.end(); ++src ){
+	    // only continue if src is reachable
+	    if( src->second == true){
+		string srcKey = src->first;
 		BSONObjBuilder srcEdges;
-		for( map<string, pair<bool,string> >::iterator tgt = availableNodes.begin(); tgt!=availableNodes.end(); ++tgt){
-		    // only continue if we have been able to make a client connection to this instance (tgt)
-		    if( tgt->second.first == true ){	
-			string tgtHostName = tgt->first;
+		for( map<string, bool >::iterator tgt = reachableNodes.begin(); tgt!=reachableNodes.end(); ++tgt){
+		    // only continue if tgt is reachable
+		    if( tgt->second == true ){	
+			string tgtKey = tgt->first;
 			BSONObjBuilder newEdge;
 			try{ 
-			    ScopedDbConnection conn( srcHostName , socketTimeout ); 
+			    ScopedDbConnection conn( nodes.getObjectField( srcKey )["hostName"].valuestrsafe() , socketTimeout ); 
 
 			    // create deep ping command in the form { ping : 1 , hosts : [ ] }
 			    BSONObjBuilder pingCmdBuilder;
 			    pingCmdBuilder.append( "ping" , 1 );
-			    BSONObj hostObj = BSON( "0" << tgtHostName );
+			    BSONObj hostObj = BSON( "0" << nodes.getObjectField( tgtKey )["hostName"].valuestrsafe() );
 			    pingCmdBuilder.appendArray( "hosts" , hostObj );
 			    BSONObj pingCmd = pingCmdBuilder.obj();
 			    BSONObj cmdReturned;
+
 			    // run deep ping
 			    conn->runCommand( "admin" , pingCmd , cmdReturned );	
 
-			    // if the source was unable to ping the target, mark the target as unavailable
-			    // and add an error or warning depending on the requirement level of the edge
-			    if( cmdReturned["exceptionInfo"].trueValue() ){
-				tgt->second.first = false;
-				if( isReqConn( nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe() , nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe() ) )
-				    addError( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , cmdReturned["exceptionInfo"].valuestrsafe() , errors );
-				if( isRecConn( nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe() , nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe() ) )
-				    addWarning( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , cmdReturned["exceptionInfo"].valuestrsafe() , warnings );
+			    if( cmdReturned["pingTimeMicros"].trueValue() == false && cmdReturned["exceptionInfo"].trueValue() == false){
+				//TODO: not a new enough version, add a warning?
+				//srcEdges.append( tgt->first , cmdReturned.getObjectField( tgtHostName ) );
+				continue;
 			    }
 
-			    // append the target node's id with the result of the ping command to it
-			    srcEdges.append( tgt->second.second , cmdReturned.getObjectField( tgtHostName ) );
+			    // if the source was unable to ping the target, mark the target as unreachable
+			    // and add an error or warning depending on the requirement level of the edge
+			    if( cmdReturned["exceptionInfo"].trueValue() ){
+				tgt->second = false;
+				if( isReqConn( nodes.getObjectField( srcKey )["role"].valuestrsafe() , nodes.getObjectField( tgtKey )["role"].valuestrsafe() ) )
+				    addAlert( srcKey , cmdReturned["exceptionInfo"].valuestrsafe() , errors );
+				if( isRecConn( nodes.getObjectField( srcKey )["role"].valuestrsafe() , nodes.getObjectField( tgtKey )["role"].valuestrsafe() ) )
+				    addAlert( srcKey , cmdReturned["exceptionInfo"].valuestrsafe() , warnings );
+			    }
+			    else{
+				// add an edge with the target node's key and the result of the ping command
+				srcEdges.append( tgt->first , cmdReturned.getObjectField( nodes.getObjectField( srcKey )["hostName"].valuestrsafe() ) );
+
+			    }
 			    conn.done();
 			}
 			catch( DBException& e ){
-			    src->second.first = false;
-			    cout << "[PingMonitor::buildGraph()] : " << e.toString() << endl;
-			    string srcRole = nodes.getObjectField( src->second.second ).getObjectField("type")["role"].valuestrsafe();
-			    string tgtRole =  nodes.getObjectField( tgt->second.second ).getObjectField("type")["role"].valuestrsafe();
-			    if( isReqConn( srcRole , tgtRole ) )
-				addError( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , e.toString() , errors );
-			    if( isRecConn( srcRole , tgtRole ) ) 
-				addWarning( nodes.getObjectField( tgt->second.second )["key"].valuestrsafe() , e.toString() , warnings );
-			}
+			    src->second = false;
+			    cout << "[" << __func__ << "] : " << e.toString() << endl;
+			    //TODO: add an edge but have a way to tell that you weren't able to run it?			  
+  			}
 		    }
 		}
 		// append the source node's id with all of its outgoing edges
-		edges.append( src->second.second , srcEdges.obj() );
+		edges.append( src->first , srcEdges.obj() );
 	    }
-	}
-    }
-
-
-
-
-
-
-
-
-
-
-
-    void PingMonitor::buildIdMap( BSONObj& nodes , BSONObjBuilder& idMap ){
-	for(BSONObj::iterator i = nodes.begin(); i.more(); ){
-	    BSONElement nodeElem = i.next();
-	    BSONObj nodeObj = nodeElem.embeddedObject();
-	    idMap.append( nodeObj["key"].valuestrsafe() , nodeElem.fieldName() ); 
 	}
     }
 
@@ -807,20 +600,12 @@ namespace mongo {
 	return recConnChart.getObjectField( src )[ tgt ].boolean();
     }
 
-    void PingMonitor::addError( const string& key , const string& err , map<string, vector<string> >& errors){
-	vector<string> list = errors[ key ];
+    void PingMonitor::addAlert( const string& key , const string& alert , map<string, vector<string> >& loc ){
+	vector<string> list = loc[ key ];
 	vector<string>::iterator it;
-	if( (it = find( list.begin(), list.end(), err )) == list.end() )
-	    list.push_back( err );
-	errors[ key ] = list;
-    }
-
-    void PingMonitor::addWarning(const string& key , const string& warn , map<string, vector<string> >& warnings){  
-	vector<string> list = warnings[ key ];
-	vector<string>::iterator it;
-	if( (it = find( list.begin(), list.end(), warn )) == list.end() )
-	    list.push_back( warn );
-	warnings [ key ] = list;
+	if( (it = find( list.begin(), list.end(), alert )) == list.end() )
+	    list.push_back( alert );
+	loc[ key ] = list;
     }
  
     void PingMonitor::diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
@@ -839,19 +624,20 @@ namespace mongo {
 	    BSONElement iElem = i.next();
 	    BSONObj iObj = iElem.embeddedObject();
 	    if( find( vec.begin(), vec.end(),  iObj["key"].valuestrsafe() ) != vec.end() ){
-		addWarning( iObj["key"].valuestrsafe() , iObj["hostName"].valuestrsafe() + ERRCODES["CONFIG_ON_SHARD"] , warnings );
+		addAlert( iObj["key"].valuestrsafe() , iObj["hostName"].valuestrsafe() + ERRCODES["CONFIG_ON_SHARD"] , warnings );
 	    }
 	}
     }
 
+/*
     void PingMonitor::calculateStats(){
 	scoped_ptr<ScopedDbConnection> connPtr;
-	auto_ptr<DBClientCursor> cursor;
+	auto_ptr<DBClientCursor> nodes;
 	try{
 	    connPtr.reset( new ScopedDbConnection( self.toString() ) ); 
 	    ScopedDbConnection& conn = *connPtr;
-	    cursor = conn->query( graphsLocation , Query(BSONObj()) );
-	    if( cursor->more() == false ){
+	    nodes = conn->query( graphsLocation , Query(BSONObj()) );
+	    if( nodes->more() == false ){
 		// no graphs data to read from
 		// TODO: do we need to log this?
 		// ERRCODES["NO_DATA"]
@@ -861,7 +647,7 @@ namespace mongo {
 	    else{
 		
 		// get a list of all node keys as strings
-		auto_ptr<DBClientCursor> allNodesCursor = conn->query( allNodesLocation, Query(BSONObj()) );
+		auto_ptr<DBClientCursor> nodes = conn->query( writeLocation, Query(BSONObj()) );
 		vector< string > allNodesList;
 		while( allNodesCursor->more() )
 		    allNodesList.push_back( allNodesCursor->next()["key"].valuestrsafe() );
@@ -879,12 +665,6 @@ namespace mongo {
 		map< string , map<string, double> > avgPingTime;
 		map< string , map<string, double> > pingTimeStdDev;
 		map< string , map<string, double> > subtractMeanSquaredSum ; // only used for intermediate steps
-		/*
-		map< string , map<string, long long> > totalOutSocketExceptions;
-		map< string , map<string, long long> > totalInSocketExceptions; 
-		map< string , map<string, long long> > totalBytesSent;
-		map< string , map<string, long long> > totalBytesRecd;
-		*/
 
 		// initialize values (many need to be compared) 
 		for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
@@ -901,12 +681,6 @@ namespace mongo {
 			    avgPingTime[ *src ][ *tgt ] = 0;
 			    pingTimeStdDev[ *src ][ *tgt ] = 0;
 			    subtractMeanSquaredSum[ *src ][ *tgt ] = 0;
-			    /*
-			    totalOutSocketExceptions[ *src ][ *tgt ] = 0;
-			    totalInSocketExceptions[ *src ][ *tgt ] = 0;
-			    totalBytesSent[ *src ][ *tgt ] = 0;
-			    totalBytesRecd[ *src ][ *tgt ] = 0;
-			    */
 			}
 		    }
 		}
@@ -932,20 +706,6 @@ namespace mongo {
 				    pingTime[ count ][ *src ][ *tgt ] = edge["pingTimeMicros"].numberLong();	
 				else
 				    pingTime[ count ][ *src ][ *tgt ] = 0;
-
-				// socket exceptions and bytes sent/recd
-				/*
-				SocketException::Type i = SocketException::CLOSED;
-				SocketException::Type end = SocketException::CONNECT_ERROR;
-				while( i < end ){
-				    targetInfo.append( SocketException::_getStringType(i) , SocketException::numExceptions( i , target ));
-				    i = static_cast<SocketException::Type>( static_cast<int>(i) + 1 );
-				}
-				totalOutSocketExceptions[ *src ][ *tgt ] += edge["outgoingSocketExceptions"].numberLong();
-				totalInSocketExceptions[ *src ][ *tgt ] += edge["incomingSocketExceptions"].numberLong();
-				totalBytesSent[ *src ][ *tgt ] += edge["bytesSent"].numberLong();
-				totalBytesRecd[ *src ][ *tgt ] += edge["bytesRecd"].numberLong();
-				*/
 			    }
 			    else
 				pingTime[ count ][ *src ][ *tgt ] = -1;
@@ -1027,16 +787,10 @@ namespace mongo {
 			    edge.append( "minPingTime" , minPingTime[ *src ][ *tgt ] );
 			    edge.append( "avgPingTime" , avgPingTime[ *src ][ *tgt ] );
 			    edge.append( "pingTimeStdDev" , pingTimeStdDev[ *src ][ *tgt ] ); 
-			    /*
-			    edge.append( "totalOutSocketExceptions" , totalOutSocketExceptions[ *src ][ *tgt ] );
-			    edge.append( "totalInSocketExceptions" , totalInSocketExceptions[ *src ][ *tgt ] ); 
-			    edge.append( "totalBytesSent" , totalBytesSent[ *src ][ *tgt ] );
-			    edge.append( "totalBytesRecd" , totalBytesRecd[ *src ][ *tgt ] );
-			    */	
 			    BSONObjBuilder idBuilder;
 			    idBuilder.append( "source" , *src );
 			    idBuilder.append( "target" , *tgt );			    
-			    conn->update( statsLocation , idBuilder.obj() , edge.obj() , true); 
+			    conn->update( writeLocation + STATS , idBuilder.obj() , edge.obj() , true); 
 			}
 		    }
 		}
@@ -1047,6 +801,8 @@ namespace mongo {
 	    cout << "[PingMonitor::calculateStats()] : " << e.toString() << endl;
 	}
     }
+*/
+
 
     bool hasNotice( vector<BSONElement>& v , string notice ){
 	for( vector<BSONElement>::iterator i = v.begin(); i!=v.end(); ++i){
@@ -1057,7 +813,7 @@ namespace mongo {
     }
 
     void PingMonitor::calculateDeltas(){
-	scoped_ptr<ScopedDbConnection> connPtr;
+/*	scoped_ptr<ScopedDbConnection> connPtr;
 	auto_ptr<DBClientCursor> cursor;
 	try{
 	    connPtr.reset( new ScopedDbConnection( self.toString() ) ); 
@@ -1193,8 +949,6 @@ namespace mongo {
 			    }
 			}
 
-
-
 			// save all deltas to the database
 
 			BSONObjBuilder idBuilder;
@@ -1210,7 +964,7 @@ namespace mongo {
 			deltasBuilder.append( "removedNodes" , removedNodes.arr() );
 			deltasBuilder.append( "removedErrors" , removedErrors.arr() );
 			deltasBuilder.append( "removedWarnings" , removedWarnings.arr() ); 
-			conn->update( deltasLocation , idBuilder.obj() , deltasBuilder.obj() , true); 
+			conn->update( writeLocation + DELTAS , idBuilder.obj() , deltasBuilder.obj() , true); 
 //		    }
 		    prev = curr;
 		    prevErrors = currErrors;
@@ -1223,8 +977,10 @@ namespace mongo {
 	} catch( DBException& e ){
 	    cout << "[PingMonitor::calculateDeltas()] : " << e.toString() << endl;
 	}
-
+*/
     }
+
+
 
     void PingMonitor::shutdown(){
 	alive = false;
