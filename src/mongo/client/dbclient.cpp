@@ -838,6 +838,8 @@ namespace mongo {
     bool DBClientConnection::_connect( string& errmsg ) {
         _serverString = _server.toString();
 
+	SocketException::exHistory[ _serverString ];
+
         // we keep around SockAddr for connection life -- maybe MessagingPort
         // requires that?
         server.reset(new SockAddr(_server.host().c_str(), _server.port()));

@@ -20,8 +20,6 @@
 #include "mongo/pch.h"
 
 #include <stdio.h>
-#include <time.h>
-#include "mongo/bson/bsonobjbuilder.h"
 #include <map>
 
 #ifndef _WIN32
@@ -46,7 +44,6 @@
 
 //added
 #include <boost/thread/mutex.hpp>
-#include <boost/thread/thread.hpp>
 
 namespace mongo {
 
@@ -151,15 +148,9 @@ namespace mongo {
               _server(server),
               _extra(extra)
 	{
-	    
-	    boost::mutex::scoped_lock lk( _mutex ); 
-//	    if( server.compare( ) ) // how to determine if socketexception is from a client or server connection?
-	    pair< string , string > key;
-	    key = make_pair( _getStringType(t) , server );
-	    exceptions[ key ]++;
-	    
+	    boost::mutex::scoped_lock lk( _totalsMutex ); 
+	    if( !(exHistory.find( server ) == exHistory.end()) ) exHistory[ server ]->types[ t ]++;	    
 	}
-
 
 	virtual ~SocketException() throw() {}
 
@@ -169,7 +160,7 @@ namespace mongo {
 
 	// return the number of socket exceptions of a particular type
 	//  this server has seen to a particular remote host
-	static long long numExceptions( Type t , string remoteHost );	
+	static long long numExceptions( Type t , string key );	
 
 	// TODO: Allow exceptions better control over their messages
         static string _getStringType( Type t ){
@@ -185,16 +176,17 @@ namespace mongo {
             }
         }
 
+    struct ExceptionTypeArray{
+	long long types[8];
+    };
+
+    // store the number of each type of SocketExceptions thrown
+    // from a connection between this instance and another server
+    static boost::mutex _totalsMutex;
+    static map< string , ExceptionTypeArray* > exHistory;
 
     private:
-	
-	static boost::mutex _mutex;
-
-	// store the number of each type of SocketExceptions thrown
-	// from a connection between this instance and another server
-	static map< pair<string,string> , long long> exceptions;
-
-        string _server;
+	string _server;
         string _extra;
     };
 
@@ -266,21 +258,8 @@ namespace mongo {
             return _fdCreationMicroSec;
         }
 
-	// return the amount of data this server has sent to a particular host
-	static long long getBytesSent( string remoteHost );
-	// return the amount of data this server has received from a particular host	
-	static long long getBytesReceived( string remoteHost );	
-
-	static string getHostsSentTo( string remoteHost );
-	static string getHostsReceivedFrom( string remoteHost );
-
     private:
 
-	static std::map< string, long long> bytesSent;
-	static std::map< string, long long> bytesRecd;
-
-	static boost::mutex _mutex;
-	
 	void _init();
 
         /** sends dumbly, just each buffer at a time */

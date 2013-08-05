@@ -391,51 +391,16 @@ namespace mongo {
         return ss.str();
     }
     
-    boost::mutex SocketException::_mutex;
 
-    std::map< std::pair<string,string> , long long > SocketException::exceptions;
 
-    long long SocketException::numExceptions( Type t , string remoteHost ){
-	pair< string , string > key;
-	key = make_pair( _getStringType(t) , remoteHost );
-	return exceptions[ key ];
+    boost::mutex SocketException::_totalsMutex;
+    std::map< string , SocketException::ExceptionTypeArray* > SocketException::exHistory;
+
+    long long SocketException::numExceptions( Type t , string key ){
+	return exHistory[ key ]->types[ t ];
     }
 
     // ------------ Socket -----------------
-
-    std::map< string , long long > Socket::bytesSent;
-    std::map< string , long long > Socket::bytesRecd;
-
-    boost::mutex Socket::_mutex;
-
-    long long Socket::getBytesSent( string remoteHost ){
-	return bytesSent[ remoteHost ];	
-    }
-    long long Socket::getBytesReceived( string remoteHost ){
-	return bytesRecd[ remoteHost ];
-    }
-
-    string Socket::getHostsReceivedFrom( string remoteHost ){
-	string out = ""; 
-	std::map< string , long long >::iterator it;
-	for( std::map< string , long long>::iterator it=bytesRecd.begin(); it!=bytesRecd.end(); ++it){
-	    out = out + it->first; 
-	    out = out + " amountData: " + boost::lexical_cast<std::string>(it->second);
-	    out = out + ", ";
-	}
-	return out;
-    }
-
-    string Socket::getHostsSentTo( std::string remoteHost ){
-	string out = ""; 
-	std::map< string , long long >::iterator it;
-	for( std::map< string , long long>::iterator it=bytesSent.begin(); it!=bytesSent.end(); ++it){
-	    out = out + it->first; 
-	    out = out + " amountData: " + boost::lexical_cast<std::string>(it->second);
-	    out = out + ", ";
-	}
-	return out;
-    } 
 
     Socket::Socket(int fd , const SockAddr& remote) : 
         _fd(fd), _remote(remote), _timeout(0), _lastValidityCheckAtSecs(time(0)) {
@@ -592,20 +557,6 @@ namespace mongo {
 
             _bytesOut += ret;
 
-	    //save the amount of data sent to a particular remote host 
-	    char remoteHostName[1024];
-	    char service[20];
-	    struct sockaddr * remoteaddr = remoteAddr().raw() ;
-	    getnameinfo( remoteaddr , sizeof(remoteaddr) , remoteHostName , sizeof(remoteHostName) , service , sizeof(service) , 0 );
-	    string remoteHostNameString( remoteHostName );
-	    string remoteIpAddr = _remote.toString();
-	    size_t remotePortPos = remoteIpAddr.find(":") + 1;
-	    string remotePort = remoteIpAddr.substr( remotePortPos );
-	    remoteHostNameString = remoteHostNameString + ":" + remotePort; 
-
-	    boost::mutex::scoped_lock lk( _mutex );
-	    bytesSent[ remoteHostNameString ] += ret; 
-          
 	    fassert(16507, ret <= len);
             len -= ret;
             data += ret;
@@ -732,20 +683,6 @@ namespace mongo {
         int x = _recv( buf , max );
         _bytesIn += x;
         
-	//save the amount of data received from the particular remote host 
-	char remoteHostName[1024];
-	char service[20];
-	struct sockaddr * remoteaddr = remoteAddr().raw() ;
-	getnameinfo( remoteaddr , sizeof(remoteaddr) , remoteHostName , sizeof(remoteHostName) , service , sizeof(service) , 0 );
-	string remoteHostNameString( remoteHostName );
-	string remoteIpAddr = _remote.toString();
-	size_t remotePortPos = remoteIpAddr.find(":") + 1;
-	string remotePort = remoteIpAddr.substr( remotePortPos ); 
-	remoteHostNameString = remoteHostNameString + ":" + remotePort;
-
-	boost::mutex::scoped_lock lk( _mutex );
-	bytesRecd[ remoteHostNameString ] += x; 
-          
 	return x;
     }
 

@@ -43,8 +43,6 @@
 #include "mongo/util/ramlog.h"
 #include "mongo/util/version.h"
 // added
-#include "mongo/util/time_support.h"
-#include "mongo/client/parallel.h"
 #include "mongo/client/connpool.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/client/dbclientinterface.h"
@@ -136,7 +134,11 @@ namespace mongo {
     public:
         PingCommand() : Command( "ping" ) {}
         virtual bool slaveOk() const { return true; }
-        virtual void help( stringstream &help ) const { help << "If only { ping : 1 } passed, a way to check that the server is alive. Responds immediately even if server is in a db lock. If { ping : 1 , hosts : [ an array of host:port strings ] } is passed, conducts a deep ping returning diagnostic information about the connection between this instance and each host:port target."; }
+        virtual void help( stringstream &help ) const { help << "If only { ping : 1 } passed, a way"
+	<< " to check that the server is alive. Responds immediately even if server is in a db lock."
+	<< " If { ping : 1 , hosts : [ an array of host:port strings ] } is passed, conducts a deep"
+	<< " ping returning diagnostic information about the connection between this instance and"
+	<< " each host:port target."; }
         virtual LockType locktype() const { return NONE; }
         virtual void addRequiredPrivileges(const std::string& dbname,
                                            const BSONObj& cmdObj,
@@ -144,67 +146,6 @@ namespace mongo {
 
 	virtual bool run(const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
             // IMPORTANT: Don't put anything in here that might lock db - including authentication
-	    
-	    //do a simple ping unless a "deep" ping with an array of hosts is requested
-	    if( cmdObj["hosts"].trueValue() == false )
-		return true;
-
-	    vector<BSONElement> v = cmdObj.getField("hosts").Array();
-	    string adminDB = "admin";
-    
-	    // for each host:port target passed in, collect raw data about the connection
-	    // between this instance and the target
-	    for( vector<BSONElement>::iterator it = v.begin(), end = v.end(); it != end; ++it)
-	    {
-		HostAndPort target;
-		target = HostAndPort( it->String() ); 
-		BSONObjBuilder targetInfo;
-		scoped_ptr<ScopedDbConnection> connPtr;
-
-		try{	
-		    connPtr.reset( new ScopedDbConnection( target.toString() ) );
-		    ScopedDbConnection& conn = *connPtr;
-		    targetInfo.append("isConnected" , true );
-
-		    //time a ping	
-		    BSONObj pingCommand = BSON( "ping" << 1 );
-		    BSONObj pingReturned;
-		    long long startTime = curTimeMicros64();
-		    conn->runCommand(adminDB , pingCommand , pingReturned );
-		    long long endTime = curTimeMicros64();
-		    targetInfo.append("pingTimeMicros", endTime - startTime ); 
-    
-		    // TODO: other connection diagnostics here
-
-		    connPtr->done();
-	    	}
-		catch ( DBException& e) {
-		    targetInfo.append("isConnected" , false );
-		    targetInfo.append("exceptionInfo", e.toString() );
-		}   
-
-		//note the amount of data sent and received between this instance and this target
-		long long bytesSent = Socket::getBytesSent( target );
-		long long bytesRecd = Socket::getBytesReceived( target );
-		if( bytesSent > 0 )
-		    targetInfo.append( "bytesSent" , bytesSent );
-		if( bytesRecd > 0 )
-		    targetInfo.append( "bytesRecd" , bytesRecd );
-			
-		//note the number of socket exceptions of each type between this instance and this target 
-		SocketException::Type i = SocketException::CLOSED;
-		SocketException::Type end = SocketException::CONNECT_ERROR;
-		while( i <= end ){
-		    long long numExceptions = SocketException::numExceptions( i , target );
-		    if( numExceptions > 0 ){ 
-			targetInfo.append( SocketException::_getStringType(i) , numExceptions );
-			cout << "had sockexception" << endl;	
-		    }
-		    i = static_cast<SocketException::Type>( static_cast<int>(i) + 1 );
-		}
-
-    		result.append( target.toString() , targetInfo.obj() );
-	    }
 	    return true;
 	}
     } pingCmd;

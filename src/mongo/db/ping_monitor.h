@@ -108,7 +108,7 @@
     	virtual void run();
 	void doPingForTarget(); //redirects to doPingForCluster() or doPingForReplset()
 
-	void writeData( BSONObj& nodes , BSONObj& edges , BSONObj& errors , BSONObj& warnings );
+	void writeData( BSONObj& nodes , BSONObj& edges , BSONObj& errors , BSONObj& warnings , long long currTime );
 
 	void doPingForReplset();
 
@@ -116,7 +116,7 @@
 
 	void doPingForCluster();
 
-	void addNewNodes( BSONObj& nodes );
+	void updateNodesList( BSONObj& nodes );
 
 	// get information about nodes
 	void getShardServers( HostAndPort& target , BSONObjBuilder& nodes , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
@@ -139,5 +139,5 @@
 
     };
 
-    BSONObj convertToBSON( map< string , vector<string> >& m , long long currTime ); 
+    BSONObj convertToBSON( map< string , vector<string> >& m ); 
 }

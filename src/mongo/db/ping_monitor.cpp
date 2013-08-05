@@ -52,12 +52,10 @@ namespace mongo {
     const string MONGOD = "mongod";
     const string MONGOS = "mongos";
 
-    const string NODES = "nodes";
-    const string EDGES = "edges";
-    const string ERRORS = "errors";
-    const string WARNINGS = "warnings";
+    const string NODESLIST = "nodeslist";
     const string STATS = "stats";
     const string DELTAS = "deltas";
+    const string SNAPSHOTS = "snapshots";
 
     // Error codes
     map< string , string > PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
@@ -121,10 +119,10 @@ namespace mongo {
     void PingMonitor::clearHistory(){
 	try{
 	    ScopedDbConnection conn( self.toString() , socketTimeout );
-	    conn->query( writeLocation + NODES, Query( BSON( "drop" << 1 ) ) ); 
-	    conn->query( writeLocation + EDGES, Query( BSON( "drop" << 1 ) ) ); 
-	    conn->query( writeLocation + ERRORS, Query( BSON( "drop" << 1 ) ) ); 
-	    conn->query( writeLocation + WARNINGS, Query( BSON( "drop" << 1 ) ) ); 
+	    conn->dropCollection( writeLocation + SNAPSHOTS ); 
+	    conn->dropCollection( writeLocation + NODESLIST ); 
+	    conn->dropCollection( writeLocation + STATS ); 
+	    conn->dropCollection( writeLocation + DELTAS ); 
 	    conn.done();
 	}
 	catch( DBException& e){
@@ -193,14 +191,17 @@ namespace mongo {
 	return toReturn.obj(); 
     }
     
-    void PingMonitor::writeData( BSONObj& nodes , BSONObj& edges , BSONObj& errors , BSONObj&  warnings ){
-	cout << "reaches" << endl;
+    void PingMonitor::writeData( BSONObj& nodes , BSONObj& edges , BSONObj& errors , BSONObj&  warnings , long long currTime ){
+	BSONObjBuilder snapshot;
+	snapshot.append( "currTime" , currTime );
+	snapshot.append( "nodes" , nodes );
+	snapshot.append( "edges" , edges );
+	snapshot.append( "errors" , errors );
+	snapshot.append( "warnings" , warnings);
+
 	try{
 	    ScopedDbConnection conn( self.toString() , socketTimeout); 
-	    conn->insert( writeLocation + NODES , nodes );
-	    conn->insert( writeLocation + EDGES , edges );
-	    conn->insert( writeLocation + ERRORS , errors );
-	    conn->insert( writeLocation + WARNINGS , warnings );
+	    conn->insert( writeLocation + SNAPSHOTS , snapshot.obj() );
 	    conn.done();
 	    numPings++;
 	} catch( DBException& e ){
@@ -226,62 +227,48 @@ namespace mongo {
 	    getMongosServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
 	    getConfigServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
 	}
-	nodesBuilder.append( "currTime" , currTime );
 	BSONObj nodes = nodesBuilder.obj();
 
-	//addNewNodes( nodes );
+	updateNodesList( nodes );
 
-	//buildGraph( nodes , edgesBuilder , errorsBuilder , warningsBuilder );
-	edgesBuilder.append( "currTime" , currTime );
+	buildGraph( nodes , edgesBuilder , errorsBuilder , warningsBuilder );
 	BSONObj edges = edgesBuilder.obj();
 
 	// TODO: add network type check in diagnose()
 	//diagnose( nodes , edges , errorsBuilder , warningsBuilder );
-	BSONObj errors = convertToBSON( errorsBuilder , currTime );
-	BSONObj warnings = convertToBSON( warningsBuilder , currTime );
+	BSONObj errors = convertToBSON( errorsBuilder );
+	BSONObj warnings = convertToBSON( warningsBuilder );
 
 	//calculateDeltas();
 
-	writeData( nodes , edges , errors , warnings ); 
+	writeData( nodes , edges , errors , warnings , currTime ); 
     }
 
-    void PingMonitor::addNewNodes( BSONObj& nodes ){
+    void PingMonitor::updateNodesList( BSONObj& nodes ){
 	scoped_ptr<ScopedDbConnection> connPtr;
 	try{
 	    connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) ); 
 	    ScopedDbConnection& conn = *connPtr;
 	    for( BSONObj::iterator i=nodes.begin(); i.more(); ){
-		BSONElement nodeElem = i.next();
-		BSONObj nodeObj = nodeElem.embeddedObject();
-		string nodeKey = nodeObj["key"].valuestrsafe();
-		scoped_ptr<DBClientCursor> cursor( conn->query( writeLocation , QUERY("key" << nodeKey ) ) );
-		if( cursor->more() ){
-		    // node is already in allNodes
-		    // potentially add more information such as previous roles
-		    //BSONObjBuilder nodeFields;
-		    //nodeFields.append( "currentRole" , nodeObj.getObjectField("type")["role"].valuestrsafe() );
-		    //nodeSubObj.appendArray( "previousRoles" )
-		    // maybe associate role with timestamp? timeStamp : role , timeStamp : role
-		}
-		else{
-		    // need to add node to allNodes
-		    BSONObjBuilder thisNode;
-		    thisNode.append( "hostName" , nodeObj["hostName"].valuestrsafe() );
-		    thisNode.append( "process" , nodeObj.getObjectField("type")["process"].valuestrsafe() );
-		    thisNode.append( "currentRole" , nodeObj.getObjectField("type")["process"].valuestrsafe() );
-		    thisNode.append( "key" , nodeObj["key"].valuestrsafe() );
-//		    conn->update( allNodesLocation , BSON("key" << nodeObj["key"].valuestrsafe()) , thisNode.obj() , true );
+		BSONElement nElem = i.next();
+		if( nElem.isSimpleType() == false ){ 
+    		    scoped_ptr<DBClientCursor> cursor( conn->query( writeLocation , QUERY("key" <<  nElem.fieldName() ) ) );
+		    if( !cursor->more() ){
+			// new node has been added
+			BSONObjBuilder thisNode;
+			thisNode.append( "key" , nElem.fieldName() );
+			conn->update( writeLocation + NODESLIST, BSON("key"<<nElem.fieldName()) , thisNode.obj() , true );
+		    }
 		}
 	    }	
 	connPtr->done();	
 	}
 	catch( DBException& e ){
-	    cout << "[PingMonitor::addNewNodes] : " << e.toString() << endl;
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
-    
     }
 
-    BSONObj convertToBSON( map<string, vector<string> >& m , long long currTime ){
+    BSONObj convertToBSON( map<string, vector<string> >& m ){
 	BSONObjBuilder b;
 	for( map<string, vector<string> >::iterator mapItr = m.begin(); mapItr!=m.end(); ++mapItr){
 	    BSONArrayBuilder aBuilder;
@@ -290,7 +277,6 @@ namespace mongo {
 	    }
 	   b.append( mapItr->first , aBuilder.arr() ); 
 	}
-	b.append( "currTime" , currTime ); 
 	return b.obj();
     }
 
@@ -484,7 +470,7 @@ namespace mongo {
 		conn->runCommand( "admin" , BSON("buildInfo"<<1) , cmdReturned );
 		newHost.append( "buildInfo" , cmdReturned ); }
 
-	    /* This info doesn't seem all that useful and is kind of redundant?
+	    /* The info in isMaster doesn't seem all that useful and is kind of redundant?
 	    // only shard mongod instances collect the following
 	    if( role.compare( PRIMARY ) == 0 || role.compare( SECONDARY ) == 0 ){
 		BSONObj cmdReturned;
@@ -500,15 +486,23 @@ namespace mongo {
 	return true;
     }
 
-    void PingMonitor::buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
+    BSONObj createDeepPingCmd( const string& tgt ){
+	BSONObjBuilder pingCmdBuilder;
+	pingCmdBuilder.append( "ping" , 1 );
+	BSONObj hostObj = BSON( "0" << tgt );
+	pingCmdBuilder.appendArray( "hosts" , hostObj );
+	return pingCmdBuilder.obj();
+    }
 
+    void PingMonitor::buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
 	// create a map of node keys to reachability
 	map< string , bool > reachableNodes;
 	for( BSONObj::iterator n = nodes.begin(); n.more(); ){
 	    BSONElement nElem = n.next();
-	    reachableNodes[ nElem.fieldName() ] = nObj.embeddedObject().getBoolField("reachable");	    
+	    // TODO: might not be the most efficient thing... the problem is that hte last field is "currTime"
+	    if( nElem.isSimpleType() == false )
+		reachableNodes[ nElem.fieldName() ] = nElem.embeddedObject().getBoolField("reachable");	    
 	}
-
 	for (map<string, bool >::iterator src = reachableNodes.begin(); src!=reachableNodes.end(); ++src ){
 	    // only continue if src is reachable
 	    if( src->second == true){
@@ -521,24 +515,16 @@ namespace mongo {
 			BSONObjBuilder newEdge;
 			try{ 
 			    ScopedDbConnection conn( nodes.getObjectField( srcKey )["hostName"].valuestrsafe() , socketTimeout ); 
-
-			    // create deep ping command in the form { ping : 1 , hosts : [ ] }
-			    BSONObjBuilder pingCmdBuilder;
-			    pingCmdBuilder.append( "ping" , 1 );
-			    BSONObj hostObj = BSON( "0" << nodes.getObjectField( tgtKey )["hostName"].valuestrsafe() );
-			    pingCmdBuilder.appendArray( "hosts" , hostObj );
-			    BSONObj pingCmd = pingCmdBuilder.obj();
 			    BSONObj cmdReturned;
-
-			    // run deep ping
+			    BSONObj pingCmd = createDeepPingCmd( nodes.getObjectField( tgtKey )["hostName"].valuestrsafe() ); 
 			    conn->runCommand( "admin" , pingCmd , cmdReturned );	
-
 			    if( cmdReturned["pingTimeMicros"].trueValue() == false && cmdReturned["exceptionInfo"].trueValue() == false){
 				//TODO: not a new enough version, add a warning?
-				//srcEdges.append( tgt->first , cmdReturned.getObjectField( tgtHostName ) );
+				// the cmdReturned field will simply have "ok : 1"
+				srcEdges.append( tgt->first , cmdReturned.getObjectField( nodes.getObjectField( tgtKey )["hostName"].valuestrsafe() ) );
+				conn.done();
 				continue;
 			    }
-
 			    // if the source was unable to ping the target, mark the target as unreachable
 			    // and add an error or warning depending on the requirement level of the edge
 			    if( cmdReturned["exceptionInfo"].trueValue() ){
@@ -550,8 +536,7 @@ namespace mongo {
 			    }
 			    else{
 				// add an edge with the target node's key and the result of the ping command
-				srcEdges.append( tgt->first , cmdReturned.getObjectField( nodes.getObjectField( srcKey )["hostName"].valuestrsafe() ) );
-
+				srcEdges.append( tgt->first , cmdReturned.getObjectField( nodes.getObjectField( tgtKey )["hostName"].valuestrsafe() ) );
 			    }
 			    conn.done();
 			}
@@ -995,7 +980,6 @@ namespace mongo {
     void PingMonitor::run() {
 	lastPingNetworkMillis = 0;
 	while ( ! inShutdown() && alive ) {
-	    
 	    /*
 	    if( lockedForWriting() ) {
 		// note: this is not perfect as you can go into fsync+lock between
@@ -1004,7 +988,6 @@ namespace mongo {
 		continue;
 	    }
 	    */
-
 	    //ping the network and time it
 	    using namespace boost::posix_time;
 	    ptime time_start(microsec_clock::local_time());
@@ -1015,7 +998,6 @@ namespace mongo {
 	    
     	    sleepsecs( interval );
 	}
-	clearHistory();
     }
 
 } 
