@@ -146,9 +146,72 @@ namespace mongo {
 
 	virtual bool run(const string& badns, BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
             // IMPORTANT: Don't put anything in here that might lock db - including authentication
-	    return true;
-	}
-    } pingCmd;
+
+//do a simple ping unless a "deep" ping with an array of hosts is requested
+           if( cmdObj["hosts"].trueValue() == false )
+               return true;
+
+           vector<BSONElement> v = cmdObj.getField("hosts").Array();
+           string adminDB = "admin";
+
+           // for each host:port target passed in, collect raw data about the connection
+           // between this instance and the target
+           for( vector<BSONElement>::iterator it = v.begin(), end = v.end(); it != end; ++it)
+           {
+               HostAndPort target;
+               target = HostAndPort( it->String() );
+               BSONObjBuilder targetInfo;
+               scoped_ptr<ScopedDbConnection> connPtr;
+
+               try{
+                   connPtr.reset( new ScopedDbConnection( target.toString() ) );
+                   ScopedDbConnection& conn = *connPtr;
+                   targetInfo.append("isConnected" , true );
+
+                   //time a ping
+                   BSONObj pingCommand = BSON( "ping" << 1 );
+                   BSONObj pingReturned;
+                   long long startTime = curTimeMicros64();
+                   conn->runCommand(adminDB , pingCommand , pingReturned );
+                   long long endTime = curTimeMicros64();
+                   targetInfo.append("pingTimeMicros", endTime - startTime );
+
+                   // TODO: other connection diagnostics here
+
+                   connPtr->done();
+               }
+               catch ( DBException& e) {
+                   targetInfo.append("isConnected" , false );
+                   targetInfo.append("exceptionInfo", e.toString() );
+               }
+
+               //note the amount of data sent and received between this instance and this target
+               long long bytesSent = Socket::getBytesSent( target );
+               long long bytesRecd = Socket::getBytesReceived( target );
+               if( bytesSent > 0 )
+                   targetInfo.append( "bytesSent" , bytesSent );
+               if( bytesRecd > 0 )
+                   targetInfo.append( "bytesRecd" , bytesRecd );
+
+               //note the number of socket exceptions of each type between this instance and this target
+
+               //note the number of socket exceptions of each type between this instance and this target
+               SocketException::Type i = SocketException::CLOSED;
+               SocketException::Type end = SocketException::CONNECT_ERROR;
+               while( i <= end ){
+                   long long numExceptions = SocketException::numExceptions( i , target );
+                   if( numExceptions > 0 ){
+                       targetInfo.append( SocketException::_getStringType(i) , numExceptions );
+                       cout << "had sockexception" << endl;
+                   }
+                   i = static_cast<SocketException::Type>( static_cast<int>(i) + 1 );
+               }
+
+               result.append( target.toString() , targetInfo.obj() );
+           }
+            return true;
+        }
+     } pingCmd;
 
     class FeaturesCmd : public Command {
     public:
