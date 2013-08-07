@@ -130,6 +130,7 @@
 	// get information about edges
 	void buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );
 	static void initializeCharts();
+	string getKey( BSONObj& nodes , string hostName);
 
 	// do additional checks on the configuration of the network 
 	void diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings );

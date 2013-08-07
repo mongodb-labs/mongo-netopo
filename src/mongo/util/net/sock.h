@@ -20,7 +20,6 @@
 #include "mongo/pch.h"
 
 #include <stdio.h>
-#include <map>
 
 #ifndef _WIN32
 
@@ -44,6 +43,7 @@
 
 //added
 #include <boost/thread/mutex.hpp>
+#include <map>
 
 namespace mongo {
 
@@ -149,7 +149,7 @@ namespace mongo {
               _extra(extra)
 	{
 	    boost::mutex::scoped_lock lk( _totalsMutex ); 
-	    if( !(exHistory.find( server ) == exHistory.end()) ) exHistory[ server ]->types[ t ]++;	    
+	    if( !(exHistory.find( server ) == exHistory.end()) ) exHistory[ server ]->exTypes[ t ]++;	    
 	}
 
 	virtual ~SocketException() throw() {}
@@ -176,18 +176,21 @@ namespace mongo {
             }
         }
 
-    struct ExceptionTypeArray{
-	long long types[8];
-    };
+	struct ExceptionTypeArray{
+	   long long exTypes[8];
+	   int exTypesSize;
+	   ExceptionTypeArray(): exTypesSize(8){};
+	};
 
-    // store the number of each type of SocketExceptions thrown
-    // from a connection between this instance and another server
-    static boost::mutex _totalsMutex;
-    static map< string , ExceptionTypeArray* > exHistory;
-
-    private:
-	string _server;
-        string _extra;
+	// store the number of each type of SocketException thrown
+	// from a connection between this instance and another server
+	static boost::mutex _totalsMutex;
+	static map< string , ExceptionTypeArray* > exHistory;
+	static long long int numExceptions( string key, Type t );
+     
+	private:
+	    string _server;
+	    string _extra;
     };
 
 

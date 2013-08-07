@@ -22,14 +22,13 @@
 #include "mongo/db/repl/is_master.h"
 #include "mongo/util/background.h"
 #include "mongo/client/connpool.h"
+#include "mongo/util/net/sock.h";
+
 #include <boost/tokenizer.hpp>
 #include <unistd.h>
 #include <sstream>
 #include <istream>
 #include <climits>
-#include "boost/date_time/posix_time/posix_time.hpp"
-
-#include "mongo/util/net/sock.h";
 
 namespace mongo {
 
@@ -61,11 +60,6 @@ namespace mongo {
     map< string , string > PingMonitor::ERRCODES = PingMonitor::initializeErrcodes();
     map< string , string > PingMonitor::initializeErrcodes(){
 	map<string,string> m;
-	m["MISSING_REQ_CONN"] = "Missing required connection to ";
-	m["MISSING_REC_CONN"] = "Missing recommended connection to ";
-	m["TARGET_NOT_NETWORK_MASTER"] = "Target is not the master of a network (primary of replica set, mongos instance, or master in master-slave relationship).";
-	m["NOT_ENOUGH_RECORDS"] = "Not enough PingMonitor records to complete this action.";
-	m["CAN'T_MAKE_CLIENT_CONNECTION"] = "Cannot make client connection to host.";
 	m["NO_DATA"] = "No ping monitor data has been collected for this target.";
 	m["CONFIG_ON_SHARD"] = " is running both a config and shard server";
 	return m;
@@ -486,71 +480,82 @@ namespace mongo {
 	return true;
     }
 
-    BSONObj createDeepPingCmd( const string& tgt ){
+    BSONObj createDeepPingCmd( vector<string>& reachableNodes , BSONObj& nodes ){
+	BSONArrayBuilder targetArrB;
+	for( vector<string>::iterator it = reachableNodes.begin(); it!=reachableNodes.end(); ++it)
+	    targetArrB.append( nodes.getObjectField( *it )["hostName"].valuestrsafe() );
 	BSONObjBuilder pingCmdBuilder;
 	pingCmdBuilder.append( "ping" , 1 );
-	BSONObj hostObj = BSON( "0" << tgt );
-	pingCmdBuilder.appendArray( "hosts" , hostObj );
+	pingCmdBuilder.append( "targets" , targetArrB.arr() );
 	return pingCmdBuilder.obj();
     }
 
     void PingMonitor::buildGraph( BSONObj& nodes , BSONObjBuilder& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
-	// create a map of node keys to reachability
-	map< string , bool > reachableNodes;
+
+	// create a vector of node keys for nodes that are marked as reachable
+	vector< string > reachableNodes;
 	for( BSONObj::iterator n = nodes.begin(); n.more(); ){
 	    BSONElement nElem = n.next();
-	    // TODO: might not be the most efficient thing... the problem is that hte last field is "currTime"
-	    if( nElem.isSimpleType() == false )
-		reachableNodes[ nElem.fieldName() ] = nElem.embeddedObject().getBoolField("reachable");	    
+	    if( nElem.embeddedObject().getBoolField("reachable") )
+		reachableNodes.push_back( nElem.fieldName() );
 	}
-	for (map<string, bool >::iterator src = reachableNodes.begin(); src!=reachableNodes.end(); ++src ){
-	    // only continue if src is reachable
-	    if( src->second == true){
-		string srcKey = src->first;
-		BSONObjBuilder srcEdges;
-		for( map<string, bool >::iterator tgt = reachableNodes.begin(); tgt!=reachableNodes.end(); ++tgt){
-		    // only continue if tgt is reachable
-		    if( tgt->second == true ){	
-			string tgtKey = tgt->first;
-			BSONObjBuilder newEdge;
-			try{ 
-			    ScopedDbConnection conn( nodes.getObjectField( srcKey )["hostName"].valuestrsafe() , socketTimeout ); 
-			    BSONObj cmdReturned;
-			    BSONObj pingCmd = createDeepPingCmd( nodes.getObjectField( tgtKey )["hostName"].valuestrsafe() ); 
-			    conn->runCommand( "admin" , pingCmd , cmdReturned );	
-			    if( cmdReturned["pingTimeMicros"].trueValue() == false && cmdReturned["exceptionInfo"].trueValue() == false){
-				//TODO: not a new enough version, add a warning?
-				// the cmdReturned field will simply have "ok : 1"
-				srcEdges.append( tgt->first , cmdReturned.getObjectField( nodes.getObjectField( tgtKey )["hostName"].valuestrsafe() ) );
-				conn.done();
-				continue;
-			    }
-			    // if the source was unable to ping the target, mark the target as unreachable
-			    // and add an error or warning depending on the requirement level of the edge
-			    if( cmdReturned["exceptionInfo"].trueValue() ){
-				tgt->second = false;
-				if( isReqConn( nodes.getObjectField( srcKey )["role"].valuestrsafe() , nodes.getObjectField( tgtKey )["role"].valuestrsafe() ) )
-				    addAlert( srcKey , cmdReturned["exceptionInfo"].valuestrsafe() , errors );
-				if( isRecConn( nodes.getObjectField( srcKey )["role"].valuestrsafe() , nodes.getObjectField( tgtKey )["role"].valuestrsafe() ) )
-				    addAlert( srcKey , cmdReturned["exceptionInfo"].valuestrsafe() , warnings );
-			    }
-			    else{
-				// add an edge with the target node's key and the result of the ping command
-				srcEdges.append( tgt->first , cmdReturned.getObjectField( nodes.getObjectField( tgtKey )["hostName"].valuestrsafe() ) );
-			    }
-			    conn.done();
-			}
-			catch( DBException& e ){
-			    src->second = false;
-			    cout << "[" << __func__ << "] : " << e.toString() << endl;
-			    //TODO: add an edge but have a way to tell that you weren't able to run it?			  
-  			}
+
+	for(vector<string>::iterator src = reachableNodes.begin(); src!=reachableNodes.end(); ++src ){
+	    BSONObjBuilder srcEdges;
+
+	    // create deep ping command
+	    BSONObj pingCmd = createDeepPingCmd( reachableNodes , nodes ); 
+
+	    // run deep ping command on all currently reachable nodes
+	    BSONObj cmdReturned;
+	    try{ 
+		ScopedDbConnection conn( nodes.getObjectField( *src )["hostName"].valuestrsafe() , socketTimeout ); 
+	    	conn->runCommand( "admin" , pingCmd , cmdReturned );	
+		conn.done();
+	    }
+	    catch( DBException& e ){
+		src = reachableNodes.erase( src );
+		continue;
+		//TODO: add an edge but have a way to tell that you weren't able to run it?			  
+	    }
+
+	    // process results of deep ping command
+	    vector<BSONElement> tgtResults = cmdReturned.getField("targets").Array();
+	    for( vector<BSONElement>::iterator it = tgtResults.begin(); it!=tgtResults.end(); ++it){
+		BSONObj tgtInfo = it->embeddedObject();
+		if( tgtInfo["pingTimeMicros"].trueValue() == false && tgtInfo["exceptionInfo"].trueValue() == false){
+		    // TODO: not a new enough version, add a warning?
+		    // TODO: check earlier on if new enough version? Maybe send a deep ping to self
+		    // the cmdReturned field will simply have "ok : 1"
+		    // (we only pinged ourselves)
+		    continue;
+		}
+		else{
+		    string tgtKey = getKey( nodes , tgtInfo["hostName"].valuestrsafe() );
+		    srcEdges.append( tgtKey , tgtInfo );
+		    if( tgtInfo["exceptionInfo"].trueValue() ){
+			// the source was unable to ping the target
+			// TODO: re-make the pingCmd with marking this target as unreachable
+			// and add an error or warning depending on the requirement level of the edge
+			if( isReqConn( nodes.getObjectField( *src )["role"].valuestrsafe() , nodes.getObjectField( tgtKey )["role"].valuestrsafe() ) )
+			    addAlert( *src , tgtInfo["exceptionInfo"].valuestrsafe() , errors );
+			if( isRecConn( nodes.getObjectField( *src )["role"].valuestrsafe() , nodes.getObjectField( tgtKey )["role"].valuestrsafe() ) )
+			    addAlert( *src , tgtInfo["exceptionInfo"].valuestrsafe() , warnings );
 		    }
 		}
-		// append the source node's id with all of its outgoing edges
-		edges.append( src->first , srcEdges.obj() );
-	    }
+	    } 
+	    // append the source node's id with all of its outgoing edges
+	    edges.append( *src , srcEdges.obj() );
 	}
+    }
+
+    string PingMonitor::getKey( BSONObj& nodes , string hostName ){
+	for( BSONObj::iterator n = nodes.begin(); n.more(); ){
+	    BSONElement nElem = n.next();
+	    if( hostName.compare( nElem.embeddedObject()["hostName"].valuestrsafe() ) == 0 )
+		return nElem.fieldName();
+	}
+	return ""; 
     }
 
     void PingMonitor::initializeCharts(){
@@ -988,13 +993,10 @@ namespace mongo {
 		continue;
 	    }
 	    */
-	    //ping the network and time it
-	    using namespace boost::posix_time;
-	    ptime time_start(microsec_clock::local_time());
-	    /*>>>*/ doPingForTarget(); /*<<<*/
-	    ptime time_end(microsec_clock::local_time());
-	    time_duration duration(time_end - time_start);
-	    lastPingNetworkMillis = duration.total_milliseconds();
+
+	    Timer pingTimer;
+	    doPingForTarget();
+	    lastPingNetworkMillis = pingTimer.micros();
 	    
     	    sleepsecs( interval );
 	}

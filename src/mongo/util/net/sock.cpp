@@ -391,13 +391,17 @@ namespace mongo {
         return ss.str();
     }
     
-
+    long long int SocketException::numExceptions( string key , Type t ){
+    if( exHistory.find( key ) != exHistory.end() )
+	return exHistory[ key ]->exTypes[ t ];
+    return 0;
+    }
 
     boost::mutex SocketException::_totalsMutex;
     std::map< string , SocketException::ExceptionTypeArray* > SocketException::exHistory;
 
     long long SocketException::numExceptions( Type t , string key ){
-	return exHistory[ key ]->types[ t ];
+	return exHistory[ key ]->exTypes[ t ];
     }
 
     // ------------ Socket -----------------
