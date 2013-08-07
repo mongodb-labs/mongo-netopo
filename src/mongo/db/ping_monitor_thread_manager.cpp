@@ -192,16 +192,16 @@ namespace mongo {
     // check if we can connect to the host and determine the host's network type
     BSONObj PingMonitorThreadManager::getConnInfo( HostAndPort& hp ){
 	BSONObjBuilder toReturn;
-	scoped_ptr<ScopedDbConnection> connPtr;
+	scoped_ptr< ScopedDbConnection > connPtr;
         try{
-            connPtr.reset( new ScopedDbConnection( hp.toString() , socketTimeout ) ); 
+	    connPtr.reset( new ScopedDbConnection( hp.toString() , socketTimeout ) );
             ScopedDbConnection& conn = *connPtr;
 	    BSONObj isMasterResults;
 	    conn->runCommand( "admin" , BSON( "isMaster" << 1 ) , isMasterResults );
 
 	    if( isMasterResults["msg"].trueValue() ){
 		toReturn.append( "networkType" , shardedCluster );
-		scoped_ptr<DBClientCursor> cursor( conn->query( "config.version" , BSONObj() ) );
+		auto_ptr<DBClientCursor> cursor( conn->query( "config.version" , BSONObj() ) );
 		toReturn.append( "collectionPrefix" , cursor->nextSafe()["clusterId"].__oid().toString() ); 
 	    }
 	    else if( isMasterResults["setName"].trueValue() ){
@@ -210,10 +210,10 @@ namespace mongo {
 	    }
 	    else
 		toReturn.append( "isNotMaster" , false );
-	    connPtr->done();
 	} catch( DBException& e ){
 	    toReturn.append( "errmsg" , e.toString() );
 	}
+	if( connPtr != 0 ) connPtr->done();
 
 	return toReturn.obj();
     }

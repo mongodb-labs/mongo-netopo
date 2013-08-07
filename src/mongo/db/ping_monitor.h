@@ -95,7 +95,7 @@
 	string collectionPrefix;		
     	string networkType;
 	int numPings;
-	long long lastPingNetworkMillis;
+	long long lastPingNetworkMicros;
 
 	// data stored in DBDirectClient's
 	// [local|config].pingMonitor.[clusterId|replsetName].[graphs|stats|deltas]
