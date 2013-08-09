@@ -226,44 +226,44 @@ namespace mongo {
 	    getConfigServers( target , nodesBuilder , errorsBuilder , warningsBuilder );
 	}
 	BSONObj nodes = nodesBuilder.obj();
-
 	updateNodesList( nodes );
 
 	buildGraph( nodes , edgesBuilder , errorsBuilder , warningsBuilder );
 	BSONObj edges = edgesBuilder.obj();
 
-	// TODO: add network type check in diagnose()
-	//diagnose( nodes , edges , errorsBuilder , warningsBuilder );
+	diagnose( nodes , edges , errorsBuilder , warningsBuilder );
 	BSONObj errors = convertToBSON( errorsBuilder );
 	BSONObj warnings = convertToBSON( warningsBuilder );
 
-	//calculateDeltas();
+	calculateDeltas();
+	calculateStats();
 
 	writeData( nodes , edges , errors , warnings , currTime ); 
     }
 
+
     void PingMonitor::updateNodesList( BSONObj& nodes ){
-	scoped_ptr<ScopedDbConnection> connPtr;
-	try{
-	    connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) ); 
-	    ScopedDbConnection& conn = *connPtr;
-	    for( BSONObj::iterator i=nodes.begin(); i.more(); ){
-		BSONElement nElem = i.next();
-		if( nElem.isSimpleType() == false ){ 
-    		    auto_ptr<DBClientCursor> cursor( conn->query( writeLocation , QUERY("key" <<  nElem.fieldName() ) ) );
-		    if( !cursor->more() ){
-			// new node has been added
-			BSONObjBuilder thisNode;
-			thisNode.append( "key" , nElem.fieldName() );
-			conn->update( writeLocation + NODESLIST, BSON("key"<<nElem.fieldName()) , thisNode.obj() , true );
-		    }
-		}
-	    }	
-	}
-	catch( DBException& e ){
-	    cout << "[" << __func__ << "] : " << e.toString() << endl;
-	}
-	if(connPtr!=0)connPtr->done();
+       scoped_ptr<ScopedDbConnection> connPtr;
+       try{
+           connPtr.reset( new ScopedDbConnection( self.toString() , socketTimeout ) );
+           ScopedDbConnection& conn = *connPtr;
+           for( BSONObj::iterator i=nodes.begin(); i.more(); ){
+               BSONElement nElem = i.next();
+               if( nElem.isSimpleType() == false ){
+                   auto_ptr<DBClientCursor> cursor( conn->query( writeLocation , QUERY("key" <<  nElem.fieldName() ) ) );
+                   if( !cursor->more() ){
+                       // new node has been added
+                       BSONObjBuilder thisNode;
+                       thisNode.append( "key" , nElem.fieldName() );
+                       conn->update( writeLocation + NODESLIST, BSON("key"<<nElem.fieldName()) , thisNode.obj() , true );
+                   }
+               }
+           }
+       }
+       catch( DBException& e ){
+           cout << "[" << __func__ << "] : " << e.toString() << endl;
+       }
+       if(connPtr!=0)connPtr->done();
     }
 
     BSONObj convertToBSON( map<string, vector<string> >& m ){
@@ -287,7 +287,7 @@ namespace mongo {
 	    conn->runCommand( "admin" , BSON("isMaster"<<1) , cmdReturned );	
 	}
 	catch ( DBException& e ){
-	    cout << "[PingMonitor::getSetServers()] : " << e.toString() << endl;
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	    //TODO: handle case that we can't get any information from the target
 	    return; 
 	}
@@ -300,8 +300,7 @@ namespace mongo {
 		const string curr = be.valuestrsafe();
 		if( curr.compare(cmdReturned["primary"].valuestrsafe()) == 0 ){
 		    addNode( nodes , curr , "mongod" , "primary" , errors , warnings );
-		    getArbitersAndPassives( curr , nodes , errors , warnings );
-		}
+		    		}
 		else
 		    addNode( nodes , curr , "mongod" , "secondary" , errors , warnings );
 	    }
@@ -326,16 +325,14 @@ namespace mongo {
 		    size_t currPos = 0;
 		    while( (currPos = memberHosts.find(delimiter)) != string::npos ){
 			const string currToken = memberHosts.substr(0 , currPos);
-			if( count == 0 ){
-			    getArbitersAndPassives( currToken , nodes ,  errors , warnings);
+			if( count == 0 )
 			    addNode( nodes , currToken , MONGOD , PRIMARY , errors , warnings , shardName );
-			 }
 			else
 			    addNode( nodes , currToken , MONGOD , SECONDARY , errors , warnings , shardName );
 			memberHosts.erase(0, currPos + delimiter.length());
 			count++; 
 		    }			
-		    addNode( nodes , memberHosts , MONGOD , SECONDARY , errors , warnings );
+		    addNode( nodes , memberHosts , MONGOD , SECONDARY , errors , warnings , shardName );
 		}
 		else
 		    addNode( nodes , p.getStringField("host") , MONGOD , PRIMARY , errors , warnings );
@@ -437,6 +434,7 @@ namespace mongo {
 	scoped_ptr< ScopedDbConnection > connPtr;	
 	try{ 
 	    connPtr.reset( new ScopedDbConnection( hostName , socketTimeout ) );
+	    getArbitersAndPassives( hostName , nodes , errors , warnings );
 	    bool stillConnected = collectClientInfo( key , hp , newHost , process , role , errors , warnings );
 	    /* TODO
 	    string machine =  "";
@@ -532,10 +530,8 @@ namespace mongo {
 	    	conn->runCommand( "admin" , pingCmd , cmdReturned );	
 	    }
 	    catch( DBException& e ){
-	//	src = reachableNodes.erase( src );
 		if(connPtr!=0)connPtr->done();
 		continue;
-		//TODO: add an edge but have a way to tell that you weren't able to run it?			  
 	    }
 	    if(connPtr!=0)connPtr->done();
 
@@ -555,7 +551,6 @@ namespace mongo {
 		    srcEdges.append( tgtKey , tgtInfo );
 		    if( tgtInfo["exceptionInfo"].trueValue() ){
 			// the source was unable to ping the target
-			// TODO: re-make the pingCmd with marking this target as unreachable
 			// and add an error or warning depending on the requirement level of the edge
 			if( isReqConn( nodes.getObjectField( *src )["role"].valuestrsafe() , nodes.getObjectField( tgtKey )["role"].valuestrsafe() ) )
 			    addAlert( *src , tgtInfo["exceptionInfo"].valuestrsafe() , errors );
@@ -619,7 +614,7 @@ namespace mongo {
     }
  
     void PingMonitor::diagnose( BSONObj& nodes , BSONObj& edges , map<string, vector<string> >& errors , map<string, vector<string> >& warnings ){
-
+	// check if config server is running on a shard server
 	string config = "config";
 	vector<string> vec;
 	for(BSONObj::iterator i = nodes.begin(); i.more(); ){
@@ -637,30 +632,29 @@ namespace mongo {
 		addAlert( iObj["key"].valuestrsafe() , iObj["hostName"].valuestrsafe() + ERRCODES["CONFIG_ON_SHARD"] , warnings );
 	    }
 	}
+
+	// TODO: other configuration diagnostics here
     }
 
-/*
+
     void PingMonitor::calculateStats(){
 	scoped_ptr<ScopedDbConnection> connPtr;
-	auto_ptr<DBClientCursor> nodes;
+	auto_ptr<DBClientCursor> cursor;
 	try{
 	    connPtr.reset( new ScopedDbConnection( self.toString() ) ); 
 	    ScopedDbConnection& conn = *connPtr;
-	    nodes = conn->query( graphsLocation , Query(BSONObj()) );
-	    if( nodes->more() == false ){
-		// no graphs data to read from
-		// TODO: do we need to log this?
-		// ERRCODES["NO_DATA"]
+	    cursor = conn->query( writeLocation + SNAPSHOTS , Query(BSONObj()) );
+	    if( cursor->more() == false ){
 		if(connPtr!=0)connPtr->done();
 		return;
 	    }
 	    else{
 		
 		// get a list of all node keys as strings
-		auto_ptr<DBClientCursor> nodes = conn->query( writeLocation, Query(BSONObj()) );
+		auto_ptr<DBClientCursor> nodesListCursor = conn->query( writeLocation + NODESLIST,  Query(BSONObj()) );
 		vector< string > allNodesList;
-		while( allNodesCursor->more() )
-		    allNodesList.push_back( allNodesCursor->next()["key"].valuestrsafe() );
+		while( nodesListCursor->more() )
+		    allNodesList.push_back( nodesListCursor->next()["key"].valuestrsafe() );
 
 		// initialize maps
 		// first one is a three dimensional map of ping times to edges at every point in time
@@ -704,13 +698,12 @@ namespace mongo {
 		while( cursor->more() ){
 		    BSONObj curr = cursor->nextSafe();
 		    BSONObj currEdges = curr.getObjectField("edges"); 
-		    BSONObj currIds = curr.getObjectField("idMap");
+		    BSONObj currNodes = curr.getObjectField("nodes");
 		    for( vector<string>::iterator src=allNodesList.begin(); src!=allNodesList.end(); ++src ){
 			for( vector<string>::iterator tgt=allNodesList.begin(); tgt!=allNodesList.end(); ++tgt ){
-			    if( (*src).compare( *tgt ) != 0 && currIds[ *src ].trueValue() != false && currIds[ *tgt ].trueValue() != false){
-				string srcNum = currIds[ *src ].valuestrsafe();
-				string tgtNum = currIds[ *tgt ].valuestrsafe();
-				BSONObj edge = currEdges.getObjectField( srcNum ).getObjectField( tgtNum );
+			    // if edge exists in this snapshot
+			    if( currEdges[ *src ].trueValue() != false && currEdges.getObjectField( *src )[ *tgt ].trueValue() != false){
+				BSONObj edge = currEdges.getObjectField( *src ).getObjectField( *tgt );
 				// ping time
 				if( edge["pingTimeMicros"].trueValue() )
 				    pingTime[ count ][ *src ][ *tgt ] = edge["pingTimeMicros"].numberLong();	
@@ -805,13 +798,13 @@ namespace mongo {
 		    }
 		}
 	    }
-	    if(connPtr!=0)connPtr->done(); 
 	}
 	catch( DBException& e ){
-	    cout << "[PingMonitor::calculateStats()] : " << e.toString() << endl;
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
+	if(connPtr!=0)connPtr->done(); 
     }
-*/
+
 
 
     bool hasNotice( vector<BSONElement>& v , string notice ){
@@ -823,12 +816,13 @@ namespace mongo {
     }
 
     void PingMonitor::calculateDeltas(){
-/*	scoped_ptr<ScopedDbConnection> connPtr;
+	scoped_ptr<ScopedDbConnection> connPtr;
 	auto_ptr<DBClientCursor> cursor;
 	try{
 	    connPtr.reset( new ScopedDbConnection( self.toString() ) ); 
 	    ScopedDbConnection& conn = *connPtr;
-	    cursor = conn->query( graphsLocation , Query(BSONObj()) );
+	    int nToReturn = 2;
+	    cursor = conn->query( writeLocation + SNAPSHOTS , Query(BSONObj()).sort("_id",-1) , nToReturn );
 	    if( cursor->more() == false ){
 		// no graphs data to read from
 		// TODO: do we need to log this? depends on how calculateDeltas is called
@@ -838,20 +832,18 @@ namespace mongo {
 	    }
 	    else{
 		int count = 0;
-		BSONObj prev = BSONObj();
 		BSONObj prevErrors = BSONObj();
 		BSONObj prevWarnings = BSONObj();
-		BSONObj prevIdMap = BSONObj();
 		BSONObj prevNodes = BSONObj();
+		BSONObj prev = BSONObj();
 
 		while( cursor->more() ){
 		    BSONObj curr = cursor->nextSafe();
 		    BSONObj currErrors = curr.getObjectField("errors");
 		    BSONObj currWarnings = curr.getObjectField("warnings");
-		    BSONObj currIdMap = curr.getObjectField("idMap");
 		    BSONObj currNodes = curr.getObjectField("nodes");
 		    
-//		    if( count > 0 ){
+		    if( count > 0 ){
 			BSONArrayBuilder newErrors;
 			BSONArrayBuilder newWarnings;
 			BSONArrayBuilder newNodes;
@@ -862,13 +854,14 @@ namespace mongo {
 
 			// check for new nodes
 			// and check for role change
-			for( BSONObj::iterator i = currIdMap.begin(); i.more(); ){
+			for( BSONObj::iterator i = currNodes.begin(); i.more(); ){
 			    string currKey = i.next().fieldName();
-			    if( prevIdMap[ currKey ].eoo() == true )
+			    if( prevNodes[ currKey ].eoo() == true )
 				newNodes.append( currKey );
 			    else{
-				string prevRole = prevNodes.getObjectField( prevIdMap[ currKey ].valuestrsafe() ).getObjectField("type")["role"];	
-				string currRole = currNodes.getObjectField( currIdMap[ currKey ].valuestrsafe() ).getObjectField("type")["role"];	
+				// the node existed in the previous ping
+				string prevRole = prevNodes.getObjectField( currKey )["role"].valuestrsafe();
+				string currRole = currNodes.getObjectField( currKey )["role"].valuestrsafe();
 				if( currRole.compare( prevRole ) != 0 ){
 				    string newFlag = "Host with key " + currKey + " changed roles from " + prevRole + " to " + currRole; 
 				    flags.append( newFlag );	
@@ -877,9 +870,9 @@ namespace mongo {
 			}
 
 			// check for removed nodes
-			for( BSONObj::iterator i = prevIdMap.begin(); i.more(); ){
+			for( BSONObj::iterator i = prevNodes.begin(); i.more(); ){
 			    string prevKey = i.next().fieldName();
-			    if( currIdMap[ prevKey ].eoo() == true )
+			    if( currNodes[ prevKey ].eoo() == true )
 				removedNodes.append( prevKey );
 			}
 
@@ -974,20 +967,21 @@ namespace mongo {
 			deltasBuilder.append( "removedNodes" , removedNodes.arr() );
 			deltasBuilder.append( "removedErrors" , removedErrors.arr() );
 			deltasBuilder.append( "removedWarnings" , removedWarnings.arr() ); 
+			deltasBuilder.append( "flags" , flags.arr() );
 			conn->update( writeLocation + DELTAS , idBuilder.obj() , deltasBuilder.obj() , true); 
-//		    }
+		    }
 		    prev = curr;
 		    prevErrors = currErrors;
 		    prevWarnings = currWarnings;
-		    prevIdMap = currIdMap;
+		    prevNodes = currNodes;
 		    count++;
 		}
 	    }
-	   if(connPtr!=0)connPtr->done();
-	} catch( DBException& e ){
-	    cout << "[PingMonitor::calculateDeltas()] : " << e.toString() << endl;
+    	} catch( DBException& e ){
+	    cout << "[" << __func__ << "] : " << e.toString() << endl;
 	}
-*/
+	if(connPtr!=0)connPtr->done();
+
     }
 
 
