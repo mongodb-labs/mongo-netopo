@@ -1,0 +1,511 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<style>
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+blockquote {
+    margin: 0;
+    padding: 0;
+}
+body {
+    font-family: "Helvetica Neue", Helvetica, "Hiragino Sans GB", Arial, sans-serif;
+    font-size: 13px;
+    line-height: 18px;
+    color: #737373;
+    background-color: white;
+    margin: 10px 13px 10px 13px;
+}
+table {
+	margin: 10px 0 15px 0;
+	border-collapse: collapse;
+}
+td,th {	
+	border: 1px solid #ddd;
+	padding: 3px 10px;
+}
+th {
+	padding: 5px 10px;	
+}
+
+a {
+    color: #0069d6;
+}
+a:hover {
+    color: #0050a3;
+    text-decoration: none;
+}
+a img {
+    border: none;
+}
+p {
+    margin-bottom: 9px;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    color: #404040;
+    line-height: 36px;
+}
+h1 {
+    margin-bottom: 18px;
+    font-size: 30px;
+}
+h2 {
+    font-size: 24px;
+}
+h3 {
+    font-size: 18px;
+}
+h4 {
+    font-size: 16px;
+}
+h5 {
+    font-size: 14px;
+}
+h6 {
+    font-size: 13px;
+}
+hr {
+    margin: 0 0 19px;
+    border: 0;
+    border-bottom: 1px solid #ccc;
+}
+blockquote {
+    padding: 13px 13px 21px 15px;
+    margin-bottom: 18px;
+    font-family:georgia,serif;
+    font-style: italic;
+}
+blockquote:before {
+    content:"\201C";
+    font-size:40px;
+    margin-left:-10px;
+    font-family:georgia,serif;
+    color:#eee;
+}
+blockquote p {
+    font-size: 14px;
+    font-weight: 300;
+    line-height: 18px;
+    margin-bottom: 0;
+    font-style: italic;
+}
+code, pre {
+    font-family: Monaco, Andale Mono, Courier New, monospace;
+}
+code {
+    background-color: #fee9cc;
+    color: rgba(0, 0, 0, 0.75);
+    padding: 1px 3px;
+    font-size: 12px;
+    -webkit-border-radius: 3px;
+    -moz-border-radius: 3px;
+    border-radius: 3px;
+}
+pre {
+    display: block;
+    padding: 14px;
+    margin: 0 0 18px;
+    line-height: 16px;
+    font-size: 11px;
+    border: 1px solid #d9d9d9;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+pre code {
+    background-color: #fff;
+    color:#737373;
+    font-size: 11px;
+    padding: 0;
+}
+sup {
+    font-size: 0.83em;
+    vertical-align: super;
+    line-height: 0;
+}
+* {
+	-webkit-print-color-adjust: exact;
+}
+@media screen and (min-width: 914px) {
+    body {
+        width: 854px;
+        margin:10px auto;
+    }
+}
+@media print {
+	body,code,pre code,h1,h2,h3,h4,h5,h6 {
+		color: black;
+	}
+	table, pre {
+		page-break-inside: avoid;
+	}
+}
+</style>
+<title>Netopo Internals</title>
+
+</head>
+<body>
+
+<h1> Network Topology Tool : 10gen, Summer 2013</h1>
+
+<img src = "graph.png" ><br/>
+@Author: Esha Maharishi, email: <a href="mailto:em2852@columbia.edu">em2852@columbia.edu</a> <br/>
+@Mentors: Scott Hernandez, Greg Studer
+
+<br/><br/>
+<h2>Netopo Internals</h2>
+
+<h4>Modified <code>ping</code> Database Command</h4>
+
+<p>The original ping command (referred to as a "shallow" ping in this document) was runnable from either a mongod or mongos instance, and simply returned <em>true</em> if the instance was reachable or <em>false</em> if not. The command was useful because it returned true even if the database was in a locked state.</p>
+
+<p>An example of the original ping command is below:</p>
+
+<pre><code>mongos&gt; db.runCommand( { ping : 1 } )
+{ "ok" : 1 }
+</code></pre>
+
+<p>There were two main additions to the ping command:</p>
+
+<p>1) To allow the mongod or mongos instance to project shallow pings to an array of "host:port" targets (also running a mongod/mongos instance), thereby determining its ability to communicate with each other host.</p>
+
+<p>2) To collect a richer set of information about the connection between the source and each target.</p>
+
+<p>This additional set of information included a simple measure of the latency of the connection (by timing a shallow ping from the source instance to each target) and the history of the number and type of SocketExceptions seen from the source to the target.</p>
+
+<p>An example of the output for the modified deep ping command is below:</p>
+
+<pre><code>mongos&gt; db.runCommand( { ping : 1 , targets : [ "127.0.0.1:30998" ] } )
+{
+    "targets" : [
+        {
+            "hostName" : "127.0.0.1:30998",
+            "isConnected" : true,
+            "pingTimeMicros" : NumberLong(709)
+            "CLOSED" : NumberLong(0),
+            "RECV_ERROR" : NumberLong(0)
+            "SEND_ERROR" : NumberLong(0)
+            "RECV_TIMEOUT" : NumberLong(0)
+            "SEND_TIMEOUT" : NumberLong(0)
+            "FAILED_STATE" : NumberLong(0)
+            "CONNECT_ERROR" : NumberLong(0)
+        }
+    ],
+    "ok" : 1
+}
+</code></pre>
+
+<p>The following files relevant files were modified:</p>
+
+<ul>
+<li>src/mongo/db/dbcomands_generic.cpp</li>
+<li>src/mongo/util/net/sock.h</li>
+<li>src/mongo/util/net/sock.cpp</li>
+<li>src/mongo/client/dbclient.cpp</li>
+</ul>
+
+
+<h4>Network Graph Tool</h4>
+
+<p>The modified ping command was used as a cornerstone to develop a network graph tool that can be used to analyze the current state and history of replica set and sharded cluster networks.</p>
+
+<h5>Complete Bidirectional Graph</h5>
+
+<p>Using the primary node of a replica set or a mongos node of a sharded cluster as a "target", the graph tool discovered all nodes in the target's network (including config servers, arbiters, and passives) and ran deep pings from each node to every other node to collect information about each edge in the graph.</p>
+
+<p>The graph tool utilized existing database commands, including hostInfo(), buildInfo(), getShardVersion(), and serverStatus(), to collect a set of information about each node.</p>
+
+<h5>Diagnostics</h5>
+
+<p>Depending on the role of each pair of nodes in a network, there is a different level of severity if a connection between the two nodes cannot be made. The table below summarizes these rules:</p>
+
+<table>
+<thead>
+<tr>
+<th align="center">x           </th>
+<th align="center"> Mongos        </th>
+<th align="center"> Config         </th>
+<th align="center"> Primary         </th>
+<th align="center"> Secondary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center">Mongos      </td>
+<td align="center">  Not Required </td>
+<td align="center">    Required    </td>
+<td align="center">     Required    </td>
+<td align="center">  Recommended</td>
+</tr>
+<tr>
+<td align="center">Config      </td>
+<td align="center">    Required   </td>
+<td align="center">    Required    </td>
+<td align="center">     Required    </td>
+<td align="center">  Recommended</td>
+</tr>
+<tr>
+<td align="center">Primary     </td>
+<td align="center">    Required   </td>
+<td align="center">    Required    </td>
+<td align="center">     Required    </td>
+<td align="center">  Recommended</td>
+</tr>
+<tr>
+<td align="center">Secondary   </td>
+<td align="center">  Recommended  </td>
+<td align="center">  Recommended   </td>
+<td align="center">  Recommended    </td>
+<td align="center">  Recommended</td>
+</tr>
+</tbody>
+</table>
+
+
+<p>Based on these requirements, the tool issued "error" alerts for missing required connections and "warning" alerts for missing recommended connections.</p>
+
+<p>Using the collected characteristic information about the nodes in the graph, the tool further diagnosed the presence of a set of precarious configuration settings in the network, for example, having a config server running on a shard server, and issued a "flag" alert for the setting.</p>
+
+<h5>Connection Statistics</h5>
+
+<p>Taking multiple "snapshots" of the network graph over time allowed for collecting statistics about the edges in the graph. Below is an example of the type of statistics collected (all time fields are in microseconds):</p>
+
+<pre><code>"source" : "localhost:29002_mongod",
+"target" : "localhost:29001_mongod",
+"numPingAttempts" : 119,
+"numSuccessful" : 119,
+"numFailed" : 0,
+"percentConnected" : 100,
+"maxPingTime" : 592,
+"minPingTime" : 68,
+"avgPingTime" : 91.89915966386555,
+"pingTimeStdDev" : 53.675557393274545
+</code></pre>
+
+<h5>Timeline of Changes in State (Deltas)</h5>
+
+<p>Storing multiple "snapshots" further allowed for pinpointing the periods of time in which the network underwent significant changes, specifically new or removed alerts as well as changes in role of a node (for example, from secondary to primary), and creating a timeline of state changes of the network.</p>
+
+<h4>Network Monitoring Threads</h4>
+
+<p>The graph tool was integrated with the existing server code base (in a separate GitHub repository at <a href="https://github.com/10gen-interns/mongo-netopo">https://github.com/10gen-interns/mongo-netopo</a>) as the underlying process in a thread used to monitor a particular target's network.</p>
+
+<p>The design was such that a mongod or mongos instance could be used as a "monitoring box" to store data over time about multiple networks.</p>
+
+<p>The data collected about each network was stored in a set of collections on the monitoring box itself.</p>
+
+<p>The following relevant files were modified or created:</p>
+
+<ul>
+<li>src/mongo/db/ping_monitor.cpp</li>
+<li>src/mongo/db/ping_monitor.h</li>
+<li>src/mongo/db/ping_monitor_thread_manager.cpp</li>
+<li>src/mongo/db/ping_monitor_thread_manager.h</li>
+</ul>
+
+
+<h4>Shell/Script Interface</h4>
+
+<p>The monitoring threads can be managed from the mongo shell or an external script via a set of commands that were added to the code base (in the independent repository).</p>
+
+<p>These commands allow for creating new threads and to removing threads(and deleting the collections associated with the thread), as well as ways to modify the settings for each thread, such as changing the interval at which snapshots are taken and turning the monitoring temporarily on or off.</p>
+
+<p>The following relevant files were created:</p>
+
+<ul>
+<li>src/mongo/db/commands/pingmonitor.cpp</li>
+</ul>
+
+
+<h4>Web Interface</h4>
+
+<p>A d3.js web application was written to visualize data collected by the monitoring threads.</p>
+
+<p>There are two main parts to the visualization application: a force-directed cluster graph of the nodes in the network, and a timeline showing the network's state changes (deltas).</p>
+
+<p>The following relevant directory was created:</p>
+
+<ul>
+<li>pingmonitor</li>
+</ul>
+
+
+<h4>Recommendations for the Future</h4>
+
+<p>A good structure for the Netopo tool has been created, but it could certainly be modified and extended for much more added functionality. Below are a few expansions and modifications that were considered:</p>
+
+<p><strong>1)</strong> Use the data collected by the monitoring threads, develop an algorithm to recommend an optimized setup for the network (based on node roles). This could easily be a spinoff of Kruskal's minimum spanning tree algorithm.</p>
+
+<p><strong>2)</strong> Collect more raw connection information involving bandwidth, throughput, and latency.</p>
+
+<p><strong>3)</strong> Though a network is monitored through a particular "target", once the rest of the nodes in the network have been discovered, use the designated target as the default monitoring target, but store a list of alternative targets in case the default is unreachable and try any and all of the alternatives before declaring an inability to monitor the network.</p>
+
+<h2>Using the Netopo Tool</h2>
+
+<h4>Setting Up a Monitoring Instance</h4>
+
+<p>To setup a mongod monitoring instance to be used with the mongo shell only, simply start up a mongod instance and connect a mongo shell to it.</p>
+
+<p>To allow for integration with the visualization web application, start the mongod with the following command-line options:</p>
+
+<pre><code>$ mongod --httpinterface --rest --jsonp
+</code></pre>
+
+<p>It is <strong>highly recommended</strong> that this mongod instance be external to any target networks you wish to monitor, so that monitoring data can persist regardless of the state of the target network.</p>
+
+<h4>Creating, Modifying, and Removing Targets</h4>
+
+<p>From the shell, use database commands to control the background monitoring threads.</p>
+
+<p>To create a new target or modify an existing target, pass in a document describing each target's settings.</p>
+
+<p>There are four fields that can be used to describe settings for a target on creation or modification.</p>
+
+<p><code>server : &lt;string&gt;</code> (the string should be in "host:port" format) is used to specify the target, and is a required field.</p>
+
+<p><code>on : &lt;boolean&gt;</code> is used to turn a monitoring on or off for the target (no data is deleted).</p>
+
+<p><code>interval : &lt;integer&gt;</code> is used to set the interval (in seconds) at which a snapshot of the network will be taken.</p>
+
+<p><code>collectionPrefix : &lt;string&gt;</code> is used to specify the prefix for the collections storing data about this target's network. The collections are stored at the following general locations:</p>
+
+<pre><code>test.pingMonitor.COLLECTIONPREFIX.snapshots
+test.pingMonitor.COLLECTIONPREFIX.nodeslist
+test.pingMonitor.COLLECTIONPREFIX.stats
+test.pingMonitor.COLLECTIONPREFIX.deltas
+test.pingMonitor.COLLECTIONPREFIX.snapshots
+</code></pre>
+
+<p>The collectionPrefix defaults to the repica set name for a replica set, and the cluster id for a sharded cluster.</p>
+
+<p><strong>Note</strong>: the collectionPrefix cannot be changed after the target is created. In order to store monitoring data in a new location, the target will have to be removed and re-created.</p>
+
+<p>An additional <code>remove : &lt;boolean&gt;</code> field can be used on an existing target to destroy the background thread monitoring the target (not just temporarily stop it) as well as remove all stored data about the target.</p>
+
+<hr />
+
+<p>An example of setting up a single target with custom settings is below:</p>
+
+<pre><code>&gt; db.runCommand( { pingMonitorConfigure : 1 , targets : [ { server : "localhost:30999" , on : false , interval : 10 , collectionPrefix : "myNetwork" }, { … } , { … } ] } );
+</code></pre>
+
+<p>An example of removing an existing target is below:</p>
+
+<pre><code>&gt; db.runCommand( { pingMonitorConfigure : 1 , targets : [ { server : "localhost:30999" , remove : true } ] } );
+</code></pre>
+
+<p>To view a summary of all current targets, use:</p>
+
+<pre><code>&gt; db.runCommand( { pingMonitorSettings : 1 } );
+</code></pre>
+
+<p>This command returns an additional two fields for each target network describing the number of snapshots taken and the amount of time it took to take the most recent snapshot.</p>
+
+<h4>Viewing Collected Data from the Shell</h4>
+
+<p>Queries can be written against the collections as with any collection to get specific subsets of information about a target network.</p>
+
+<p>The collections are organized as follows:</p>
+
+<p>Snapshots: ("keys" are a string representation of the "host:port" concatenated by an underscore with the process being run on that server, for example "127.0.0.1:30999_mongos")</p>
+
+<pre><code>{
+    nodes : {
+            "key" : {
+                    "hostName" : &lt;string&gt;
+                    "process" : &lt;string&gt;
+                    "role" : &lt;string&gt;
+                    "hostInfo" : JSON document
+                    "serverStatus" : JSON document
+                    "shardVersion" : JSON document
+                    "buildInfo" : JSON document
+                    }
+            … more keys … 
+            }
+    edges : {
+            "key" : {
+                    "key" : {
+                            "hostName" : &lt;string&gt;
+                            "isConnected" : &lt;boolean&gt;
+                            ---- if isConnected is true ----
+                            "pingTimeMicros" : NumberLong()
+                            "CLOSED" : NumberLong()
+                            "RECV_ERROR" : NumberLong()
+                            "SEND_ERROR" : NumberLong()
+                            "RECV_TIMEOUT" : NumberLong()
+                            "SEND_TIMEOUT" : NumberLong()
+                            "FAILED_STATE" : NumberLong()
+                            "CONNECT_ERROR" : NumbeLong()
+                            ---- if isConnected is false ----
+                            "exceptionInfo" : &lt;string&gt;
+                            "exceptionCode" : &lt;int&gt;
+                        }
+                        … more keys …
+                    }
+                    … more keys …
+                }
+    errors : {
+            "key" : string[]
+            … more keys …
+    }
+    warnings : {
+            "key" : string[]
+            … more keys …
+    }
+    flags : {
+            "key" : string[]
+            … more keys ..
+    }
+}
+</code></pre>
+
+<p>Stats: a document for each edge is stored (see above "Connection Statistics").</p>
+
+<p>Deltas: a document for each pair of consecutive snapshots is stored (so n-1 documents for n snapshots) in the following format:</p>
+
+<pre><code>    "currTime" : ISODate("2013-08-08T19:55:52.522Z"),
+    "prevTime" : ISODate("2013-08-08T19:55:37.491Z"),
+    "newNodes" : [ ],
+    "newErrors" : [ ],
+    "newWarnings" : [ ],
+    "removedNodes" : [ ],
+    "removedErrors" : [ ],
+    "removedWarnings" : [ ],
+    "flags" : [ ]
+</code></pre>
+
+<h4>Viewing Collected Data from the Web</h4>
+
+<p>Input the information about where the monitoring data is stored at the top. For example, for information stored in a mongod running on localhost:27018 about a target network that is a sharded cluster with cluster id "5203f32e8a665153da3391ee":</p>
+
+<pre><code>    Server Name : localhost
+    Port Number : 27018
+    Database Name : test
+    Collection Prefix : 5203f32e8a665153da3391ee
+</code></pre>
+
+<ul>
+<li><p>Click "Load Latest Content" to load a force-directed graph of the network as of the most recent snapshot and a timeline of deltas that the network has experienced.</p></li>
+<li><p>Hover over nodes and edges for more information about them.</p></li>
+<li><p>Hover over points on the timeline for more information about what occurred at that time.</p></li>
+<li><p>Click on points on the timeline to redraw the graph as it was at the time that error occurred.</p></li>
+</ul>
+
+<br/><br/><br/>
+
+
+
+
+</body>
+</html>

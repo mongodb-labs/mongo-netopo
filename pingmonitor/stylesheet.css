@@ -1,0 +1,116 @@
+
+*{
+	margin : 0px;
+	padding: 0px;
+}
+
+body{
+	background-color:#160B00;
+	font-family: 'Droid Sans' , sans-serif;
+	color: white;
+	padding: 20px;
+}
+
+#chart{
+/*	border : 1px;
+	border-style: dashed;
+	border-color: gray; */
+	width : 1000px;
+	float:left;
+	background-color: #191919;
+}
+
+
+#container{
+	margin: 0px auto;
+	width: 1000px;
+}
+
+.bound{
+	border: 1px;
+	border-style: dashed;
+	border-color: gray;
+	background-color: #191919;
+	padding: 5px;
+}
+
+#flags{
+	color: white;
+	height: 500px;
+}
+
+table td 
+{
+  table-layout:fixed;
+  width: auto;
+  max-width:300px;
+  overflow:hidden;
+  word-wrap:break-word;
+  padding-right: 2px;
+  vertical-align:top;
+}
+
+.node{
+  opacity: .8;
+}
+
+.node text {
+  pointer-events: none;
+  font: 10px sans-serif;
+  color: #fff;
+}
+
+path.link {
+  fill: none;
+/*  stroke: gray; */
+  stroke-opacity: .6;
+  stroke-width: 3px;
+}
+
+
+.axis path,
+.axis line {
+  fill: none;
+  stroke: #fff;
+  shape-rendering: crispEdges;
+}
+
+.axis text{
+	color: #fff;
+}
+
+.dot {
+  stroke: #eee;
+}
+
+
+.graticule {
+  fill: none;
+  stroke: #777;
+  stroke-opacity: .5;
+  stroke-width: .5px;
+}
+
+.land {
+  fill: #444;
+}
+
+.boundary {
+  fill: none;
+  stroke: #fff;
+  stroke-width: .5px;
+}
+
+.white-font{
+	color: white;
+}
+
+.label{
+	color: #fff;
+}
+
+.tit{
+	font-size: 40px;
+	margin-top: 1000px;
+}
+

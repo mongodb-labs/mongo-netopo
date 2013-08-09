@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<head>
+
+	<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+	<title>MongoDB Network Visualization </title>
+  
+    <script type="text/javascript" src="http://mbostock.github.com/d3/d3.js"></script>
+    <script type="text/javascript" src="http://code.jquery.com/jquery-1.6.2.min.js"></script> 
+    <link href="tipsy.css" rel="stylesheet" type="text/css" />
+    <link href='http://fonts.googleapis.com/css?family=Droid+Sans' rel='stylesheet' type='text/css'>
+    <script src="http://d3js.org/d3.v3.min.js"></script>
+    <script src="http://d3js.org/topojson.v1.min.js"></script>
+    
+    <link href="stylesheet.css" rel="stylesheet" type="text/css" />
+    
+    <!-- 
+      Here is the style sheet for the Coda Slider
+      You may want to "minify" this after making edits
+      http://www.refresh-sf.com/yui/ 
+    -->
+    <link rel="stylesheet" type="text/css" media="screen" href="./css/coda-slider.css">
+    
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+    <script src="./js/jquery.easing.1.3.js"></script>
+    
+    <!-- This of course is required. The full version (not .min) is also included in the js directory -->
+    <script src="./js/jquery.coda-slider-3.0.min.js"></script>
+    
+    <script type="text/javascript" src="jquery.tipsy.js"></script>
+        
+    <script src="loadWorld.js"></script>
+    
+    <script>
+    $(function(){
+
+      /* Here is the slider using default settings */
+      $('#slider-id').codaSlider();
+      /* If you want to adjust the settings, you set an option
+         as follows:
+
+          $('#slider-id').codaSlider({
+            autoSlide:true,
+            autoHeight:false
+          });
+      
+      */
+    });
+
+    </script> 
+
+	<script>
+
+	var width = 960,
+		height = 400,
+		markerWidth = 6,
+		markerHeight = 6,
+		cRadius = 30, // play with the cRadius value
+		refX = cRadius + (markerWidth * 2),
+		refY = -Math.sqrt(cRadius),
+		drSub = cRadius + refY;
+		
+	var svgWorld;
+	var projection;
+	
+	var bigRadius = 20,
+		littleRadius = 10,
+		padding = 10;
+	var fill = d3.scale.category20c();  
+
+	
+	//setInterval(function(){ loadData(); },10000);
+	//setInterval(function(){ loadDeltas(); }, 10000);
+		
+	function loadData( time ){
+	
+		/************************* CHECK IF INPUT FIELDS ARE FILLED *********************/
+		
+		var servname, portnum, dbname, collpref;
+		
+		if( document.getElementById("servname").value == "" )
+			{ alert("Please enter a server name!"); return; }
+		else servname = document.getElementById("servname").value;
+			
+		if( document.getElementById("portnum").value == "" )
+			{ alert("Please enter a port number!"); return; }
+		else portnum = document.getElementById("portnum").value;
+			
+		if( document.getElementById("dbname").value == "" )
+			{ alert("Please enter a database name!"); return; }
+		else dbname = document.getElementById("dbname").value;
+			
+		if( document.getElementById("collpref").value == "" )
+			{ alert("Please enter a collection prefix!"); return; }
+		else collpref = document.getElementById("collpref").value;
+		
+		var snapshotsurl = "http://" + servname + ":" + portnum + "/" + dbname + "/pingMonitor." + collpref + ".snapshots/";
+
+		/****************************** CLEAR DRAWING AREAS AND HISTORY *****************/
+		
+		document.getElementById("chartTime").innerHTML= "";
+		document.getElementById("chart").innerHTML= "";
+		var nodes = [];
+		var links = [];
+		
+			$.ajax({
+				url: snapshotsurl,
+				type: 'get',
+				dataType: 'jsonp',
+				jsonp: 'jsonp', // mongod is expecting the parameter name to be called "jsonp"
+				success: function (data) {
+				
+		/********************************* GET NODE DATA ********************************/
+		
+					var timeDate = new Date( time );
+		
+					var lastNodes;
+					var lastEdges;
+					if( time < 0  ){
+						lastNodes = data.rows[ data.total_rows - 1 ].nodes;
+						lastEdges = data.rows[ data.total_rows - 1 ].edges;
+						document.getElementById("chartTime").innerHTML= new Date( data.rows[ data.total_rows - 1 ].currTime );
+					}
+					else{
+						var i = 0;
+						while( new Date(data.rows[i].currTime) < timeDate ) i++;
+						lastNodes = data.rows[ i ].nodes;
+						lastEdges = data.rows[ i ].edges;
+						document.getElementById("chartTime").innerHTML= new Date( data.rows[ i ].currTime );
+					}
+					
+
+						
+					var nodesMap = {};
+					var count = 0;
+					for( var n in lastNodes ){
+					
+						var curr = lastNodes[n];
+
+						var newNode = {};
+						
+						newNode[ "reachable" ] = curr.reachable;
+									
+						newNode[ "toShow" ] = {};
+						
+						newNode[ "toShow" ][ "hostName" ] = curr.hostName;
+						newNode[ "toShow" ][ "process" ] = curr.process;
+						newNode[ "toShow" ][ "role" ] = curr.role;
+						
+						if( curr.shardName != null )
+							newNode[ "toShow" ][ "shardName" ] = curr.shardName;
+					
+						if( curr.hostInfo != null )
+							newNode[ "toShow" ][ "os" ] = curr.hostInfo.os.name;
+				
+						if( curr.serverStatus != null ){
+							newNode[ "toShow" ][ "mongodbVersion" ] = curr.serverStatus.version;
+							newNode[ "toShow" ][ "connections" ] = curr.serverStatus.connections.current;
+							newNode[ "toShow" ][ "uptimeSecs" ] = curr.serverStatus.uptime;
+						}
+						
+						if( curr.role == "secondary" || (curr.role == "primary" && curr.shardName != null) )
+							newNode[ "group" ] = curr.shardName;
+						else
+							newNode[ "group" ] = curr.hostName;
+				
+				
+						if( curr.role == "secondary" )
+							newNode[ "radius" ] = littleRadius;
+						else
+							newNode[ "radius" ] = bigRadius;
+							
+							
+						if( curr.reachable == false ){
+							newNode[ "color" ] = "darkred";
+							newNode[ "strokecolor" ] = "red";
+						}		
+						else{
+							newNode[ "color" ] = d3.rgb( fill( newNode["group"] ) );
+							newNode[ "strokecolor" ] = d3.rgb( fill( newNode["group"] ) ).brighter(3);
+						}
+				
+						newNode["lon"] = -75 + Math.random(30);
+						newNode["lat"] = 43 + Math.random(30);
+
+						nodes.push( newNode );
+						nodesMap[ n ] = count;
+						count++;
+					}
+
+	
+		/********************************* GET EDGE DATA ********************************/
+		
+					
+					for( var eo in lastEdges ){
+						for( var ei in lastEdges[ eo ] ){
+						
+							var neo = nodesMap[ eo ];
+							var nei = nodesMap[ ei ];
+							
+							if( nodes[neo].toShow.role != "secondary" && nodes[nei].toShow.role != "secondary" ){ //[ parseInt(ei) ] == null && nodes[ parseInt(ei) ].role != "secondary" && nodes[ parseInt(eo) ].role != "secondary" ){
+								var newEdge = {};
+								newEdge[ "source" ] = neo;
+								newEdge[ "target" ] = nei;
+							
+								newEdge[ "show" ] = {};
+								
+								newEdge[ "show" ][ "source" ] = eo;
+								newEdge[ "show" ][ "target" ] = ei;
+								newEdge[ "show" ][ "isConnected" ] = lastEdges[eo][ei].isConnected;
+								
+								if( lastEdges[eo][ei].pingTimeMicros != null ) newEdge[ "show" ][ "pingTimeMicros" ] = lastEdges[eo][ei].pingTimeMicros;
+								if( lastEdges[eo][ei].bytesSent != null ) newEdge[ "show" ][ "bytesSent" ] = lastEdges[eo][ei].bytesSent;
+								if( lastEdges[eo][ei].bytesRecd != null ) newEdge[ "show" ][ "bytesRecd" ] = lastEdges[eo][ei].bytesRecd;
+								if( lastEdges[eo][ei].exceptionInfo != null ) newEdge[ "show" ][ "exceptionInfo" ] = lastEdges[eo][ei].exceptionInfo;
+								if( lastEdges[eo][ei].exceptionCode != null ) newEdge[ "show" ][ "exceptionCode" ] = lastEdges[eo][ei].exceptionCode;
+								
+								links.push( newEdge );
+							}
+						}
+
+					}
+
+		/****************************** BUILD FORCE GRAPH ********************************/
+		
+					var groups = d3.nest()
+						.key(function(d)
+							{ return d.group; }
+						).entries(nodes);
+
+					var groupPath = function(d) {
+						return "M" + 
+						  d3.geom.hull(d.values.map(function(i) { return [i.x, i.y]; }))
+							.join("L")
+						+ "Z";
+					};
+
+					var groupFill = function(d, i) { return "white";};
+
+				//	height = nodes.length * 50;
+				//	document.getElementById("chart").style.height = height + "px";
+					var vis = d3.select("#chart").append("svg")
+						.attr("width", width )
+						.attr("height", height );
+
+					var force = d3.layout.force()
+						.nodes(nodes)
+						.links(links)
+						.linkDistance(200)
+						.linkStrength(0.5)
+						.friction(0.2)
+						.size([width, height])
+						.start();
+
+				
+					var link = vis.append("svg:g").selectAll(".link")
+						.data(links)
+					  .enter().append("svg:path")
+						.attr("class", "link")
+						.attr("stroke" , function(d){ 
+							if( d.show.isConnected == false )
+								return "red";
+							else
+								return "gray";
+						});
+
+
+					var node = vis.selectAll("circle.node")
+						.data(nodes)
+					  .enter().append("circle")
+						.attr("class", "node")
+						.attr("cx", function(d) { return d.cx; })
+						.attr("cy", function(d) { return d.cy; })
+						.attr("r", function(d) { return d.radius; })
+						.style("fill", function(d) { return d.color; } )
+						.style("stroke", function(d) { return d.strokecolor; })
+						.style("stroke-width", 4)
+						.call(force.drag);
+
+					vis.style("opacity", 1e-6)
+					  .transition()
+						.duration(1000)
+						.style("opacity", 1);
+						
+					force.on("tick", function(e) {
+						node.each(cluster(40 * e.alpha * e.alpha))
+							.each(collide(.5))
+							.attr("cx", function(d) { return d.x; })
+							.attr("cy", function(d) { return d.y; });
+							
+						link.attr("d", function(d) {
+							var dx = d.target.x - d.source.x,
+								dy = d.target.y - d.source.y,
+								dr = Math.sqrt(dx * dx + dy * dy);
+							return "M" + d.source.x + "," + d.source.y + "A" + dr + "," + dr + " 0 0,1 " + d.target.x + "," + d.target.y;
+						  });
+							
+						vis.selectAll("group.path")
+							.data(groups)
+						  		.attr("d", groupPath)
+							.enter().insert("group.path", "circle")
+								.attr("class" , "group.path" )
+								.style("fill", groupFill)
+								.style("stroke", groupFill)
+								.style("stroke-width", 60)
+								.style("stroke-linejoin", "round")
+								.style("opacity", .2) 
+								.attr("d", groupPath);		  
+					});
+
+					// Move d to be adjacent to the cluster node.
+					function cluster(alpha) {
+				  		var max = {};
+
+						// Find the largest node for each cluster.
+						nodes.forEach(function(d) {
+							if (!(d.group in max) || (d.radius > max[d.group].radius)) {
+							  max[d.group] = d;
+							}
+						});
+
+						return function(d) {
+							var node = max[d.group],
+								l,r,x,y,
+								k = 1,
+								i = -1;
+
+							// For cluster nodes, apply custom gravity.
+							if (node == d) {
+							  node = {x: width / 2, y: height / 2, radius: -d.radius};
+							  k =.1 * Math.sqrt(d.radius);
+							}
+
+							x = d.x - node.x;
+							y = d.y - node.y;
+							l = Math.sqrt(x * x + y * y);
+							r = d.radius + node.radius;
+							if (l != r) {
+							  l = (l - r) / l * alpha * k;
+							  d.x -= x *= l;
+							  d.y -= y *= l;
+							  node.x += x;
+							  node.y += y;
+							}
+						};
+					}
+					
+					// Resolves collisions between d and all other circles.
+					function collide(alpha) {
+					  var quadtree = d3.geom.quadtree(nodes);
+					  return function(d) {
+						var r = d.radius /*+ radius.domain()[1] */+ padding,
+							nx1 = d.x - r,
+							nx2 = d.x + r,
+							ny1 = d.y - r,
+							ny2 = d.y + r;
+						quadtree.visit(function(quad, x1, y1, x2, y2) {
+						  if (quad.point && (quad.point !== d)) {
+							var x = d.x - quad.point.x,
+								y = d.y - quad.point.y,
+								l = Math.sqrt(x * x + y * y),
+								r = d.radius + quad.point.radius + (d.color !== quad.point.color) * padding;
+							if (l < r) {
+							  l = (l - r) / l * alpha;
+							  d.x -= x *= l;
+							  d.y -= y *= l;
+							  quad.point.x += x;
+							  quad.point.y += y;
+							}
+						  }
+						  return x1 > nx2
+							  || x2 < nx1
+							  || y1 > ny2
+							  || y2 < ny1;
+						});
+					  };
+					}
+
+				/*************************************** SHOW DATA ON HOVER *****************************************/
+		
+				$('svg circle').tipsy({ 
+					gravity: 'w', 
+					html: true, 
+					title: function() {
+						var out = "<table>";
+						for( var n in (this.__data__.toShow) ){
+							out += "<tr>";
+							out += "<td align='left'><b>" + n + ":<b></td>";
+							out += "<td>" + this.__data__.toShow[n] + "</td>";
+							out += "</tr>";				
+						}
+						out += "</table>";
+						return out;
+					}
+				  });
+		  
+				$('svg g path').tipsy({
+					gravity: 'w',
+					html: true,
+					title: function(){
+
+					var out1 = "";
+					out1 += "<table>";
+					for( var n in this.__data__.show){
+							out1 += "<tr>";
+							out1 += "<td align='left'><b>" + n + ":<b></td>";
+							out1 += "<td>" + this.__data__.show[n] + "</td>";
+							out1 += "</tr>";	
+					}
+					out1 += "</table>";
+			
+					return out1;
+			
+					}
+				});
+		
+				$('svg g path').hover(function(){
+					$(this).css("stroke" , "yellow");
+				},
+				function(){
+					$(this).css("stroke" , "gray");
+				});
+		
+				$('svg circle').hover(function(){
+					$(this).css("fill" , "yellow");
+				},
+				function(){
+					$(this).css("fill" , function(){ return this.__data__["color"]; });
+				});
+
+				
+
+				
+				},
+				error: function (XMLHttpRequest, textStatus, errorThrown) {
+					alert("Unable to send request. Please check input data.");
+					console.log('error', errorThrown);
+				}
+			});
+			
+		}
+
+			function showTime( time ){
+				alert( "" + time );
+			}
+
+			function loadDeltas(){
+			var servname, portnum, dbname, collpref;
+			if( document.getElementById("servname").value == "" )
+				{ alert("Please enter a server name!"); return; }
+			else servname = document.getElementById("servname").value;
+			if( document.getElementById("portnum").value == "" )
+				{ alert("Please enter a port number!"); return; }
+			else portnum = document.getElementById("portnum").value;
+			if( document.getElementById("dbname").value == "" )
+				{ alert("Please enter a database name!"); return; }
+			else dbname = document.getElementById("dbname").value;
+			if( document.getElementById("collpref").value == "" )
+				{ alert("Please enter a collection prefix!"); return; }
+			else collpref = document.getElementById("collpref").value;
+
+			var deltasurl = "http://" + servname + ":" + portnum + "/" + dbname + "/pingMonitor." + collpref + ".deltas/";
+				$.ajax({
+				 url: deltasurl,
+				 type: 'get',
+				 dataType: 'jsonp',
+				 jsonp: 'jsonp', // mongod is expecting the parameter name to be called "jsonp"
+				 success: function (data) {  
+ 
+				var alerts = [];
+
+					document.getElementById("alerts").innerHTML= "";
+
+				var color = d3.scale.category20();
+				var sev = { "low" : 0, "med" : 1 , "high" : 2 };
+				
+
+				for( var z=0; z< data.rows.length; z++){
+					var count = 0.1;
+					for( var i=0; i < data.rows[z].removedNodes.length; i++ ){
+						newFlag = {}
+						newFlag["type"] = "removedNode";
+						newFlag["msg"] = data.rows[z].removedNodes[i];
+						newFlag["time"] = new Date(data.rows[z].currTime.$date);
+						newFlag["severity"] = "med";
+						newFlag["yval"] = count;
+						newFlag["xval"] = newFlag["time"];
+						newFlag["color"] = color( newFlag["type"] );
+						alerts.push( newFlag );
+						count += 0.1;
+					}
+					for( var i=0; i < data.rows[z].newNodes.length; i++ ){
+						newFlag = {}
+						newFlag["type"] = "newNode";
+						newFlag["msg"] = data.rows[z].newNodes[i];
+						newFlag["time"] = new Date(data.rows[z].currTime.$date);
+						newFlag["severity"] = "low";
+						newFlag["yval"] = count;
+						newFlag["xval"] = newFlag["time"];
+						newFlag["color"] = color( newFlag["type"] );
+						alerts.push( newFlag );
+						count += 0.1;
+					}
+					for( var i=0; i < data.rows[z].newErrors.length; i++ ){
+						newFlag = {}
+						newFlag["type"] = "newError";
+						newFlag["msg"] = data.rows[z].newErrors[i];
+						newFlag["time"] = new Date(data.rows[z].currTime.$date);
+						newFlag["severity"] = "high";
+						newFlag["yval"] = count;
+						newFlag["xval"] = newFlag["time"];
+						newFlag["color"] = color( newFlag["type"] );
+						alerts.push( newFlag );
+						count += 0.1;
+					}
+					for( var i=0; i < data.rows[z].removedErrors.length; i++ ){
+						newFlag = {}
+						newFlag["type"] = "removedError";
+						newFlag["msg"] = data.rows[z].removedErrors[i];
+						newFlag["time"] = new Date(data.rows[z].currTime.$date);
+						newFlag["severity"] = "low";
+						newFlag["yval"] = count;
+						newFlag["xval"] = newFlag["time"];
+						newFlag["color"] = color( newFlag["type"] );
+						alerts.push( newFlag );
+						count += 0.1;
+					}
+					for( var i=0; i < data.rows[z].newWarnings.length; i++ ){
+						newFlag = {}
+						newFlag["type"] = "newWarning";
+						newFlag["msg"] = data.rows[z].newWarnings[i];
+						newFlag["time"] = new Date(data.rows[z].currTime.$date);
+						newFlag["severity"] = "med";
+						newFlag["yval"] = count;
+						newFlag["xval"] = newFlag["time"];
+						newFlag["color"] = color( newFlag["type"] );
+						alerts.push( newFlag );
+						count += 0.1;
+					}
+					for( var i=0; i < data.rows[z].removedWarnings.length; i++ ){
+						newFlag = {}
+						newFlag["type"] = "removedWarning";
+						newFlag["msg"] = data.rows[z].removedWarnings[i];
+						newFlag["time"] = new Date(data.rows[z].currTime.$date);
+						newFlag["severity"] = "low";
+						newFlag["yval"] = count;
+						newFlag["xval"] = newFlag["time"];
+						newFlag["color"] = color( newFlag["type"] );
+						alerts.push( newFlag );
+						count += 0.1;
+					}
+				}
+
+				var x = d3.time.scale()
+				//	.domain(d3.extent( alerts , function(d){ return new Date(d.time) } ))
+				.domain( [ data.rows[0].currTime.$date , data.rows[ data.total_rows-1 ].currTime.$date ] )
+
+				var ymax = d3.max(alerts , function(d){ return d.yval });
+
+				var y = d3.scale.linear()
+				.domain([0, ymax + 1])
+
+
+				var margin = {top: 20, right: 30, bottom: 50, left: 60};
+				var width = 960 - margin.left - margin.right;
+				var height = 500; //parseInt(1000 * ymax) - margin.top - margin.bottom;
+				
+				/* not functional, but interesting idea -- create a slider that mimics the
+				scale of the time graph, and allow the user to select a time to display by
+				sliding this scale...
+					
+				var axishtml = '<input type="range" name="time" style="width:' + width + 'px; height:20px; background-color:#fff;"'
+				axishtml += 'min="' + new Date(data.rows[0].currTime.$date) + '" ';
+				axishtml += 'max="' + new Date(data.rows[ data.total_rows-1 ].currTime.$date) + '" ';
+				axishtml += 'value="' + new Date(data.rows[ data.total_rows-1 ].currTime.$date) + '" ';
+				axishtml += 'onchange="loadData(this.value)" />'
+				document.getElementById("chartAxis").innerHTML = axishtml;
+				*/
+
+				x.range([0,width]);
+				y.range([margin.top,height]);
+
+				var xAxis = d3.svg.axis()
+				.scale(x)
+				.orient("top");
+
+				var yAxis = d3.svg.axis()
+				.scale(y)
+				.tickFormat(function (d) { return ''; })
+				.orient("left");
+
+				var svgalerts = d3.select("#alerts").append("svg")
+				.attr("width", width + margin.left + margin.right)
+				.attr("height", height + margin.top + margin.bottom)
+				 .append("g")
+				.attr("transform", "translate(" + margin.left + "," + margin.top + ")")
+				svgalerts.append("g")
+				 .attr("class", "x axis")
+				 .attr("transform", "translate(0," + margin.top + ")")
+				 .call(xAxis)
+					.style("fill" , "white")
+				.append("text")
+				 .attr("class", "label")
+				 .attr("x", width)
+				 .attr("y", 20)
+				 .style("text-anchor", "end")
+				 .style("fill", "white")
+				 .text("Time");
+ 
+				svgalerts.append("g")
+				 .call(yAxis)
+					.style("fill" , "#191919");
+
+				var dots = svgalerts.selectAll(".dot")
+				 .data(alerts)
+				.enter().append("circle")
+				 .attr("class", "dot")
+				 .attr("r", 8)
+				 .attr("cx", function(d) { return x(d.time); })
+				 .attr("cy", function(d) { return y(d.yval); })
+				 .style("fill", function(d) { return d.color; })
+				 .style("stroke", function(d) { return d3.rgb( color(d.type) ).darker(5); });
+
+				var legend = svgalerts.selectAll(".legend")
+				 .data(color.domain())
+				.enter().append("g")
+				 .attr("class", "legend")
+				 .attr("transform", function(d, i) { return "translate(0," + i * 20 + ")"; });
+
+				legend.append("rect")
+				 .attr("x", width - 18)
+				 .attr("y", height-margin.top-margin.bottom)
+				 .attr("width", 18)
+				 .attr("height", 18)
+				 .style("fill", color);
+
+				legend.append("text")
+				 .attr("x", width - 24)
+				 .attr("y", height-margin.top-margin.bottom)
+				 .attr("dy", ".35em")
+				 .style("text-anchor", "end")
+				 .style("fill", "white")
+				 .text(function(d) { return d; });
+
+				$('.dot').click( function(){
+					var myTime = this.__data__["time"];
+					loadData( myTime );				
+				});
+
+				$('.dot').tipsy({ 
+				gravity: 'w', 
+				html: true, 
+				title: function() {
+				var out = "<table>";
+
+				out += "<tr>";
+				out += "<td align='left'><b>" + "type" + ":<b></td>";
+				out += "<td>" + this.__data__["type"] + "</td>";
+				out += "</tr>";
+
+				out += "<tr>";
+				out += "<td align='left'><b>" + "msg" + ":<b></td>";
+				out += "<td>" + this.__data__["msg"] + "</td>";
+				out += "</tr>";
+
+				out += "<tr>";
+				out += "<td align='left'><b>" + "time" + ":<b></td>";
+				out += "<td>" + this.__data__["time"] + "</td>";
+				out += "</tr>";
+
+				out += "<tr>";
+				out += "<td align='left'><b>" + "severity" + ":<b></td>";
+				out += "<td>" + this.__data__["severity"] + "</td>";
+				out += "</tr>";
+
+				out += "</table>";
+				return out;
+				}
+				});
+
+			console.log('success' , data );
+			 },
+			 error: function (XMLHttpRequest, textStatus, errorThrown) {
+				alert("Unable to send request. Please check input data.");
+			console.log('error', errorThrown);
+			 }
+			});
+			}
+
+
+  </script>
+  
+
+</head>
+
+<body>
+
+	<div id="container">
+	
+		<div class="outlink"> 
+		
+		
+			<a href="http://github.com/10gen-interns/mongo-netopo">GitHub</a> 
+			<font style="color:green;">&nbsp|&nbsp</font>
+			<a href="https://wiki.10gen.com/display/10GEN/Network+Topology+Mapper">Netopo Wiki</a>
+		
+		</div>
+
+		<div style="width:100%; text-align:center;">
+			<span class="tit">Visualization of a</span>
+			<img src="logo-mongodb-for-jira.png" style="position:relative; top:22px;">
+			<span class="tit">Network</span>
+		</div>
+
+		<br/><br/>
+
+		<div id="test"></div>
+
+		<div class="bound" style="width:1000px">
+			<h3>Monitoring instance access information: </h3>
+			<br/>
+			<form>
+				<table>
+					<tr><td> Server name: </td>
+					<td> <input type="text" name="servname" id="servname" value="localhost"> </td></tr>
+					<tr><td> Port number: </td>
+					<td> <input type="text" name="portnum" id="portnum" value="28017"> </td></tr>
+					<tr><td> Database name: </td>
+					<td> <input type="text" name="dbname" id="dbname" value="test"> </td></tr>
+					<tr><td> Collection prefix: </td>
+					<td> <input type="text" name="collpref" id="collpref" value="5203f32e8a665153da3391ee"> </td></tr>
+				</table>
+				<br/>
+				<button type="button" onclick="loadData(-1); loadDeltas()">Load Latest Content</button>
+			</form> 
+		</div>
+
+		<br/><br/>
+		
+		<div>
+
+			<!--<div class="coda-slider"  id="slider-id">-->
+			
+			<h2 class="title">Network Graph</h2>
+			  <div class="bound">
+					<br/>
+					<div id="chart" style="width:960; height:410px; overflow:hidden;"></div>	
+					<div id="chartTime" style="height:30px; margin-left:60px; clear:both;"></div>
+					<!--<div id="chartAxis" style="height:20px; margin-left:60px; clear:both;"></div>-->
+					<div id="alerts" style="clear:both;"></div>
+			  </div>
+			  
+			  <br/><br/>
+			  
+			  <div>
+				<h2 class="title">Geographic View</h2>
+				<div id="world"></div>
+				<script> loadWorldMap("#world" , 970 , 500 ); </script>
+			  </div>
+			  
+			<!--</div>-->
+    
+    	</div>
+
+		<br/><br/>
+		<br/><br/>
+		
+		
+	
+	</div>
+
+
+
+</body>
+
+</html>

@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<head>
+
+<style>
+
+*{
+	margin : 0px;
+	padding: 0px;
+}
+
+body{
+	background-color:#160B00;
+	font-family: 'Droid Sans' , sans-serif;
+	color: white;
+	padding: 20px;
+}
+
+#chart{
+/*	border : 1px;
+	border-style: dashed;
+	border-color: gray; */
+	width : 970px;
+	height: 500px;
+	float:left;
+	background-color: #191919;
+}
+
+#info{
+	float: left;
+	height: 500px;
+	width: 280px;
+	margin-right: 18px;
+	border: 1px;
+}
+
+#container{
+	margin: 0px auto;
+	width: 1000px;
+}
+
+.bound{
+	border: 1px;
+	border-style: dashed;
+	border-color: gray;
+	background-color: #191919;
+	padding: 5px;
+}
+
+.edgeInfo{
+	border: 1px;
+	border-style: dashed;
+	border-color: gray;
+	background-color: #191919;
+	padding: 5px;
+}
+
+#flags{
+	color: white;
+	height: 500px;
+}
+
+table td 
+{
+  table-layout:fixed;
+  width: auto;
+  overflow:hidden;
+  word-wrap:break-word;
+  padding-right: 2px;
+}
+
+.link {
+  stroke: gray;
+  stroke-opacity: .5;
+  stroke-width: 5px;
+}
+
+.node{
+  opacity: .8;
+}
+
+.axis path,
+.axis line {
+  fill: none;
+  stroke: #fff;
+  shape-rendering: crispEdges;
+}
+
+.axis text{
+	color: #fff;
+}
+
+.dot {
+  stroke: #eee;
+}
+
+
+.graticule {
+  fill: none;
+  stroke: #777;
+  stroke-opacity: .5;
+  stroke-width: .5px;
+}
+
+.land {
+  fill: #444;
+}
+
+.boundary {
+  fill: none;
+  stroke: #fff;
+  stroke-width: .5px;
+}
+
+.white-font{
+	color: white;
+}
+
+.label{
+	color: #fff;
+}
+
+.tit{
+	font-size: 40px;
+	margin-top: 1000px;
+}
+
+</style>
+
+	<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+	<title>MongoDB Network visualization </title>
+  
+    <script type="text/javascript" src="http://mbostock.github.com/d3/d3.js"></script>
+    <script type="text/javascript" src="http://code.jquery.com/jquery-1.6.2.min.js"></script> 
+    <link href="tipsy.css" rel="stylesheet" type="text/css" />
+    <link href='http://fonts.googleapis.com/css?family=Droid+Sans' rel='stylesheet' type='text/css'>
+
+    
+    <!-- 
+      Here is the style sheet for the Coda Slider
+      You may want to "minify" this after making edits
+      http://www.refresh-sf.com/yui/ 
+    -->
+    <link rel="stylesheet" type="text/css" media="screen" href="./css/coda-slider.css">
+    
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+    <script src="./js/jquery.easing.1.3.js"></script>
+    
+    <!-- This of course is required. The full version (not .min) is also included in the js directory -->
+    <script src="./js/jquery.coda-slider-3.0.min.js"></script>
+    
+    <script type="text/javascript" src="jquery.tipsy.js"></script>
+    
+        <script src="http://d3js.org/d3.v3.min.js"></script>
+    <script src="http://d3js.org/topojson.v1.min.js"></script>
+    
+    
+    
+    <script src="loadWorld.js"></script>
+    
+    <script>
+    $(function(){
+
+      /* Here is the slider using default settings */
+      $('#slider-id').codaSlider();
+      /* If you want to adjust the settings, you set an option
+         as follows:
+
+          $('#slider-id').codaSlider({
+            autoSlide:true,
+            autoHeight:false
+          });
+      
+      */
+    });
+
+    </script> 
+
+	<script>
+	
+		function loadData(){
+		
+			loadMe();
+			
+					
+			/********************************** CHECK IF INPUT FIELDS ARE FILLED *********************************/
+	
+			var servname, portnum, dbname, collpref;
+		
+			if( document.getElementById("servname").value == "" )
+				{ alert("Please enter a server name!"); return; }
+			else servname = document.getElementById("servname").value;
+			
+			if( document.getElementById("portnum").value == "" )
+				{ alert("Please enter a port number!"); return; }
+			else portnum = document.getElementById("portnum").value;
+			
+			if( document.getElementById("dbname").value == "" )
+				{ alert("Please enter a database name!"); return; }
+			else dbname = document.getElementById("dbname").value;
+			
+			if( document.getElementById("collpref").value == "" )
+				{ alert("Please enter a collection prefix!"); return; }
+			else collpref = document.getElementById("collpref").value;
+		
+			var graphsurl = "http://" + servname + ":" + portnum + "/" + dbname + "/pingMonitor." + collpref + ".graphs/";
+		
+			$.ajax({
+			  url: graphsurl,
+			  type: 'get',
+			  dataType: 'jsonp',
+			  jsonp: 'jsonp', // mongod is expecting the parameter name to be called "jsonp"
+			  success: function (data) {
+
+
+				var html = "";
+				var fill = d3.scale.category20c(),
+					padding = 6;
+					m = 8;
+					x = d3.scale.ordinal().domain(d3.range(m)).rangePoints([0, width], 1);
+
+				var bigRadius = 20;
+					littleRadius = 10;
+	
+				var nodes = [];
+				var links = [];
+
+
+			/**************************************** GET NODE DATA ****************************************/
+		  
+				for( var n in data.rows[1].nodes ){
+				
+					newNode = {};
+				
+					newNode[ "hostName" ] = data.rows[1].nodes[n].hostName;
+					var role = data.rows[1].nodes[n].type.role;
+					newNode[ "role" ] = role;
+
+					newNode[ "toShow" ] = {};
+					newNode[ "toShow" ][ "hostname" ] = data.rows[1].nodes[n].hostName;
+				
+					if( data.rows[1].nodes[n].shardName )
+						newNode[ "toShow" ][ "shardName" ] = data.rows[1].nodes[n].shardName;
+					
+					newNode[ "toShow" ][ "role" ] = data.rows[1].nodes[n].type.role;
+					newNode[ "toShow" ][ "os" ] = data.rows[1].nodes[n].hostInfo.os.name;
+					newNode[ "toShow" ][ "mongodbVersion" ] = data.rows[1].nodes[n].serverStatus.version;
+					newNode[ "toShow" ][ "connections" ] = data.rows[1].nodes[n].serverStatus.connections.current;
+					newNode[ "toShow" ][ "uptimeSecs" ] = data.rows[1].nodes[n].serverStatus.uptime;
+				
+					if( role == "primary" || role == "secondary" ){
+						newNode[ "group" ] = data.rows[1].nodes[n].shardName;
+					}
+					else{
+						newNode[ "group" ] = newNode[ "hostName" ];
+					}
+				
+					if( role == "secondary" )
+						newNode[ "radius" ] = littleRadius;
+					else
+						newNode[ "radius" ] = bigRadius;
+						
+					if( role == "config" || role == "mongos" ){
+						newNode[ "color" ] = d3.rgb( fill( newNode["role"] ) );
+						newNode[ "strokecolor" ] = d3.rgb( fill( newNode["role"] ) ).darker(3);
+					}
+					else{
+						newNode[ "color" ] = d3.rgb( fill( newNode["group"] ) );
+						newNode[ "strokecolor" ] = d3.rgb( fill( newNode["group"] ) ).brighter(3);
+					}
+					
+					nodes.push( newNode );
+				
+				}
+			
+				var allGroups = {};
+				for( var i=0; i<nodes.length; i++){
+					var myGroup = nodes[i].group;
+					if( allGroups[ myGroup ] == null ){
+						allGroups[ myGroup ] = {};
+						if( i % 2 == 0 )
+							allGroups[ myGroup ]["plusx"] = 2*i;
+						else
+							allGroups[ myGroup ]["plusx"] = -2*i;
+					}
+				}
+
+			/******************************************** BUILD FORCE GRAPH **************************************************/
+		
+				var groups = d3.nest()
+					.key(function(d)
+						{ return d.group; }
+					).entries(nodes);
+
+				var groupPath = function(d) {
+					return "M" + 
+					  d3.geom.hull(d.values.map(function(i) { return [i.x, i.y]; }))
+						.join("L")
+					+ "Z";
+				};
+
+				var groupFill = function(d, i) { return "white";};
+
+				var force = d3.layout.force()
+					.nodes(nodes)
+					.size([width, height])
+					.start();
+
+				var node = svgWorld.selectAll("circle.node")
+					.data(nodes)
+				  .enter().append("circle")
+					.attr("class", "node")
+					.attr("cx", function(d) { return d.cx; })
+					.attr("cy", function(d) { return d.cy; })
+					.attr("r", function(d) { return d.radius; })
+					.style("fill", function(d) { return d.color; } )
+					.style("stroke", function(d) { return d.strokecolor; })
+					.style("stroke-width", 2)
+					.call(force.drag);
+
+				svgWorld.style("opacity", 1e-6)
+				  .transition()
+					.duration(1000)
+					.style("opacity", 1);
+
+				force.on("tick", function(e) {
+					// Push different nodes in different directions for clustering.
+					nodes.forEach(function(o, i) {
+						o.x += (allGroups[ o.group ][ "plusx" ] * e.alpha);
+						o.y += (Math.random(5) * e.alpha);
+					}); 
+	
+					node.each(cluster(40 * e.alpha * e.alpha))
+					//  .each(collide(.5))
+						.attr("cx", function(d) { return d.x; })
+						.attr("cy", function(d) { return d.y; });
+
+					svgWorld.selectAll("path")
+					.data(groups)
+						.attr("d", groupPath)
+					.enter().insert("path", "circle")
+						.style("fill", groupFill)
+						.style("stroke", groupFill)
+						.style("stroke-width", 60)
+						.style("stroke-linejoin", "round")
+						.style("opacity", .2) 
+						.attr("d", groupPath);			  
+				});
+
+				// Move d to be adjacent to the cluster node.
+				function cluster(alpha) {
+					var max = {};
+
+					// Find the largest node for each cluster.
+					nodes.forEach(function(d) {
+						if (!(d.color in max) || (d.radius > max[d.color].radius)) {
+						  max[d.color] = d;
+						}
+					});
+					return function(d) {
+						var node = max[d.color],
+							l,r,x,y,
+							k = 1,
+							i = -1;
+
+						// For cluster nodes, apply custom gravity.
+						if (node == d) {
+						  node = {x: width / 2, y: height / 2, radius: -d.radius};
+						  k =.1 * Math.sqrt(d.radius);
+						}
+
+						x = d.x - node.x;
+						y = d.y - node.y;
+						l = Math.sqrt(x * x + y * y);
+						r = d.radius + node.radius;
+						if (l != r) {
+						  l = (l - r) / l * alpha * k;
+						  d.x -= x *= l;
+						  d.y -= y *= l;
+						  node.x += x;
+						  node.y += y;
+						}
+					};
+				}
+
+ 
+ 
+			  }, // end success function
+			  error: function (XMLHttpRequest, textStatus, errorThrown) {
+				alert("Unable to send request. Please check input data.");
+			  }
+			});
+		} // end loadData() function
+
+
+  </script>
+  
+
+
+</head>
+
+<body>
+		
+		<div id="early"></div>
+
+	<div id="container">
+
+		<div style="width:100%; text-align:center;">
+			<span class="tit">svgWorldualization of a</span>
+			<img src="logo-mongodb-for-jira.png" style="position:relative; top:22px;">
+			<span class="tit">Network</span>
+		</div>
+
+		<br/><br/>
+
+		<div id="test"></div>
+
+		<div class="bound" style="width:1000px">
+			<h3>Monitoring instance access information: </h3>
+			<br/>
+			<form>
+				<table>
+					<tr><td> Server name: </td>
+					<td> <input type="text" name="servname" id="servname" value="localhost"> </td></tr>
+					<tr><td> Port number: </td>
+					<td> <input type="text" name="portnum" id="portnum" value="28017"> </td></tr>
+					<tr><td> Database name: </td>
+					<td> <input type="text" name="dbname" id="dbname" value="test"> </td></tr>
+					<tr><td> Collection prefix: </td>
+					<td> <input type="text" name="collpref" id="collpref" value="51f5dbbea626c4a5bbbe7bf9"> </td></tr>
+				</table>
+				<br/>
+				<button type="button" onclick="loadData();">Load Content</button>
+			</form> 
+		</div>
+
+		<br/><br/>
+		
+		<div>
+
+			<div class="coda-slider"  id="slider-id">
+			
+			  <div>
+				<h2 class="title">Network Graph</h2>
+				<div style="height:500px;">
+					<div id="chart"></div>	
+				</div>
+	
+			  </div>
+			  
+			  <div>
+				<h2 class="title">Historical Data</h2>
+				<div id="flags" style="margin-top:50px; clear:both;"></div>
+			  </div>
+			  
+			  <div>
+				<h2 class="title">Geographic View</h2>
+				
+			  </div>
+			  
+			</div>
+    
+    	</div>
+    	
+    	
+    	
+
+
+		
+		
+		
+	
+	</div>
+
+
+
+</body>
+
+</html>
